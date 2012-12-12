@@ -154,7 +154,7 @@ fail:
     return -EINVAL;
 }
 
-int init_dock_image(omap_hwc_device_t *hwc_dev, uint32_t max_width, uint32_t max_height)
+int init_dock_image(omap_hwc_device_t *hwc_dev)
 {
     int err = 0;
 
@@ -173,8 +173,8 @@ int init_dock_image(omap_hwc_device_t *hwc_dev, uint32_t max_width, uint32_t max
         goto done;
     }
 
-    dock_image.max_width = max_width;
-    dock_image.max_height = max_height;
+    dock_image.max_width = hwc_dev->platform_limits.max_width;
+    dock_image.max_height = hwc_dev->platform_limits.max_height;
 
     done:
     return err;
