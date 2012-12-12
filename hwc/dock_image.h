@@ -31,7 +31,7 @@ struct image_info {
 };
 typedef struct image_info image_info_t;
 
-int init_dock_image(omap_hwc_device_t *hwc_dev, uint32_t max_width, uint32_t max_height);
+int init_dock_image(omap_hwc_device_t *hwc_dev);
 void load_dock_image();
 image_info_t *get_dock_image();
 

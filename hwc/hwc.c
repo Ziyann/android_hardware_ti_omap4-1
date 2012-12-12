@@ -721,8 +721,6 @@ static void adjust_ext_layer(omap_hwc_ext_t *ext, struct dss2_ovl_info *ovl)
         oc->mirror = !oc->mirror;
 }
 
-static struct dsscomp_platform_info limits;
-
 static void adjust_primary_display_layer(omap_hwc_device_t *hwc_dev, struct dss2_ovl_info *ovl)
 {
     struct dss2_ovl_cfg *oc = &ovl->cfg;
@@ -795,7 +793,7 @@ static bool can_scale_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer, IM
 
     /* NOTE: layers should be able to be scaled externally since
        framebuffer is able to be scaled on selected external resolution */
-    return can_scale(src_w, src_h, dst_w, dst_h, is_NV12(handle), &hwc_dev->fb_dis, &limits,
+    return can_scale(src_w, src_h, dst_w, dst_h, is_NV12(handle), &hwc_dev->fb_dis, &hwc_dev->platform_limits,
                      hwc_dev->fb_dis.timings.pixel_clock, handle);
 }
 
@@ -815,7 +813,7 @@ static bool is_valid_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer, IMG
     if (!is_NV12(handle)) {
         if (layer->transform)
             return false;
-        if (mem1d(handle) > limits.tiler1d_slot_size)
+        if (mem1d(handle) > hwc_dev->platform_limits.tiler1d_slot_size)
             return false;
     }
 
@@ -919,7 +917,7 @@ static int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_
         if (!d.modedb[i].pixclock ||
             (d.modedb[i].vmode & ~FB_VMODE_INTERLACED) ||
             !can_scale(xres, yres, ext_fb_xres, ext_fb_yres,
-                       1, &d.dis, &limits,
+                       1, &d.dis, &hwc_dev->platform_limits,
                        1000000000 / d.modedb[i].pixclock, NULL))
             continue;
 
@@ -962,7 +960,7 @@ static int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_
                            ext_width, ext_height, &ext_fb_xres, &ext_fb_yres);
         if (!d.dis.timings.pixel_clock ||
             !can_scale(xres, yres, ext_fb_xres, ext_fb_yres,
-                       1, &d.dis, &limits,
+                       1, &d.dis, &hwc_dev->platform_limits,
                        d.dis.timings.pixel_clock, NULL)) {
             ALOGW("DSS scaler cannot support HDMI cloning");
             return -1;
@@ -1125,7 +1123,7 @@ static bool can_dss_render_all(omap_hwc_device_t *hwc_dev)
             num->scaled_layers <= num->max_scaling_overlays &&
             num->NV12 <= num->max_scaling_overlays &&
             /* fits into TILER slot */
-            num->mem <= limits.tiler1d_slot_size &&
+            num->mem <= hwc_dev->platform_limits.tiler1d_slot_size &&
             /* we cannot clone non-NV12 transformed layers */
             (!tform || (num->NV12 == num->possible_overlay_layers) ||
             (num->NV12 && ext->current.docking)) &&
@@ -1700,7 +1698,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
              is_protected(layer) ||
              is_upscaled_NV12(hwc_dev, layer) ||
              (hwc_dev->ext.current.docking && hwc_dev->ext.current.enabled && dockable(layer))) &&
-            mem_used + mem1d(handle) <= limits.tiler1d_slot_size &&
+            mem_used + mem1d(handle) <= hwc_dev->platform_limits.tiler1d_slot_size &&
             /* can't have a transparent overlay in the middle of the framebuffer stack */
             !(is_BLENDED(layer) && fb_z >= 0)) {
 
@@ -2310,13 +2308,13 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
         * This is required only if the FB tranform is different from that
         * of the external display and the FB is not in TILER2D space
         */
-        if (ext->mirror.rotation && (limits.fbmem_type != DSSCOMP_FBMEM_TILER2D))
+        if (ext->mirror.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D))
             allocate_tiler2d_buffers(hwc_dev);
 
         add_external_display(hwc_dev);
     } else {
         ext->last_mode = 0;
-        if (ext->mirror.rotation && (limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
+        if (ext->mirror.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
             /* free tiler 2D buffer on detach */
             free_tiler2d_buffers(hwc_dev);
         }
@@ -2588,7 +2586,7 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
         goto done;
     }
 
-    int ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_QUERY_PLATFORM, &limits);
+    int ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_QUERY_PLATFORM, &hwc_dev->platform_limits);
     if (ret) {
         ALOGE("failed to get platform limits (%d): %m", errno);
         err = -errno;
@@ -2602,7 +2600,7 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
         goto done;
     }
 
-    err = init_dock_image(hwc_dev, limits.max_width, limits.max_height);
+    err = init_dock_image(hwc_dev);
     if (err)
         goto done;
 

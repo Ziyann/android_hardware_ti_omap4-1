@@ -122,6 +122,7 @@ struct omap_hwc_device {
     pthread_t hdmi_thread;
     pthread_mutex_t lock;
 
+    struct dsscomp_platform_info platform_limits;
     IMG_framebuffer_device_public_t *fb_dev;
     int fb_fd;                   /* file descriptor for /dev/fb0 */
     int dsscomp_fd;              /* file descriptor for /dev/dsscomp */
