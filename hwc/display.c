@@ -23,6 +23,13 @@
 #include <cutils/log.h>
 
 #include <video/dsscomp.h>
+#ifdef USE_TI_LIBION
+#include <ion_ti/ion.h>
+#else
+#include <ion/ion.h>
+#include "ion_ti_custom.h"
+#endif
+
 
 #include "hwc_dev.h"
 #include "display.h"
@@ -45,17 +52,17 @@ static void free_display(display_t *display)
     }
 }
 
-static int allocate_display(uint32_t max_configs, display_t **new_display)
+static int allocate_display(size_t display_data_size, uint32_t max_configs, display_t **new_display)
 {
     int err = 0;
 
-    display_t *display = (display_t *)malloc(sizeof(*display));
+    display_t *display = (display_t *)malloc(display_data_size);
     if (display == NULL) {
         err = -ENOMEM;
         goto err_out;
     }
 
-    memset(display, 0, sizeof(*display));
+    memset(display, 0, display_data_size);
 
     display->num_configs = max_configs;
     size_t config_data_size = sizeof(*display->configs) * display->num_configs;
@@ -93,6 +100,53 @@ static int get_display_info(omap_hwc_device_t *hwc_dev, int disp, struct dsscomp
     return 0;
 }
 
+static int free_tiler2d_buffers(external_display_t *display)
+{
+    int i;
+    for (i = 0 ; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
+#ifdef USE_TI_LIBION
+        ion_free(display->ion_fd, display->ion_handles[i]);
+#else
+        ion_free(display->ion_fd, (ion_user_handle_t) display->ion_handles[i]);
+#endif
+        display->ion_handles[i] = NULL;
+    }
+
+    return 0;
+}
+
+static int allocate_tiler2d_buffers(omap_hwc_device_t *hwc_dev, external_display_t *display)
+{
+    int ret, i;
+    size_t stride;
+
+    if (display->ion_fd < 0) {
+        ALOGE("No ion fd, hence can't allocate tiler2d buffers");
+        return -ENOMEM;
+    }
+
+    for (i = 0; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
+        if (display->ion_handles[i])
+            return 0;
+    }
+
+    for (i = 0 ; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
+        ret = ion_alloc_tiler(display->ion_fd, hwc_dev->fb_dev->base.width, hwc_dev->fb_dev->base.height,
+                              TILER_PIXEL_FMT_32BIT, 0, &display->ion_handles[i], &stride);
+        if (ret)
+            goto handle_error;
+
+        ALOGI("ion handle[%d][%p]", i, display->ion_handles[i]);
+    }
+
+    return 0;
+
+handle_error:
+
+    free_tiler2d_buffers(display);
+    return -ENOMEM;
+}
+
 int init_primary_display(omap_hwc_device_t *hwc_dev)
 {
     int err;
@@ -101,7 +155,7 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
     if (err)
         return err;
 
-    err = allocate_display(PRIMARY_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
+    err = allocate_display(sizeof(display_t), PRIMARY_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
     if (err)
         return err;
 
@@ -132,12 +186,12 @@ int add_external_display(omap_hwc_device_t *hwc_dev)
         return err;
 
     /* Currently SF cannot handle more than 1 config */
-    err = allocate_display(1, &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
+    err = allocate_display(sizeof(external_display_t), 1, &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
     if (err)
         return err;
 
-    display_t *display = hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-    display_config_t *config = &display->configs[0];
+    external_display_t *display = (external_display_t *)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+    display_config_t *config = &display->base.configs[0];
     omap_hwc_ext_t *ext = &hwc_dev->ext;
 
     config->xres = ext->mirror_region.right - ext->mirror_region.left;
@@ -152,13 +206,52 @@ int add_external_display(omap_hwc_device_t *hwc_dev)
         config->ydpi = EXTERNAL_DISPLAY_DEFAULT_DPI;
     }
 
+    /* Allocate backup buffers for FB rotation. This is required only if the FB tranform is
+     * different from that of the external display and the FB is not in TILER2D space.
+     */
+    if (ext->mirror.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
+        display->ion_fd = ion_open();
+        if (display->ion_fd >= 0) {
+            allocate_tiler2d_buffers(hwc_dev, display);
+        } else {
+            ALOGE("Failed to open ion driver (%d)", errno);
+        }
+    }
+
     return 0;
 }
 
 void remove_external_display(omap_hwc_device_t *hwc_dev)
 {
+    external_display_t *display = (external_display_t *)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+    if (!display)
+        return;
+
+    omap_hwc_ext_t *ext = &hwc_dev->ext;
+
+    if (ext->mirror.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
+        /* free tiler 2D buffer on detach */
+        free_tiler2d_buffers(display);
+
+        if (display->ion_fd >= 0)
+            ion_close(display->ion_fd);
+    }
+
     free_display(hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
     hwc_dev->displays[HWC_DISPLAY_EXTERNAL] = NULL;
+}
+
+struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev)
+{
+    external_display_t *display = (external_display_t *)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+
+    if (display) {
+        struct dsscomp_setup_dispc_data *dsscomp = &hwc_dev->comp_data.dsscomp_data;
+
+        return display->ion_handles[dsscomp->sync_id % EXTERNAL_DISPLAY_BACK_BUFFERS];
+    } else {
+        return NULL;
+    }
 }
 
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs)
@@ -232,6 +325,10 @@ int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t cfg, c
 
 void free_displays(omap_hwc_device_t *hwc_dev)
 {
+    /* Make sure that we don't leak ION memory that might be allocated by external display */
+    if (hwc_dev->displays[HWC_DISPLAY_EXTERNAL])
+        remove_external_display(hwc_dev);
+
     int i;
     for (i = 0; i < MAX_DISPLAYS; i++)
         free_display(hwc_dev->displays[i]);
