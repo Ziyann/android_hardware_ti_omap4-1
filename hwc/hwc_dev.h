@@ -52,7 +52,6 @@ struct omap_hwc_ext {
 
     /* state */
     bool hdmi_state;                    /* whether HDMI is connected */
-    bool on_tv;                         /* using a tv */
     ext_transform_t current;            /* current settings */
     ext_transform_t last;               /* last-used settings */
 
@@ -136,7 +135,6 @@ struct omap_hwc_device {
     int flags_nv12_only;
     float upscaled_nv12_limit;
 
-    bool on_tv;                  /* using a tv */
     int force_sgx;
     omap_hwc_ext_t ext;         /* external mirroring data */
     int idle;
