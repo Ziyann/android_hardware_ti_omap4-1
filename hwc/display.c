@@ -34,11 +34,15 @@
 #include "hwc_dev.h"
 #include "display.h"
 
-#define PRIMARY_DISPLAY_CONFIGS 1
-#define PRIMARY_DISPLAY_FPS 60
-#define PRIMARY_DISPLAY_DEFAULT_DPI 150
-#define EXTERNAL_DISPLAY_FPS 60
-#define EXTERNAL_DISPLAY_DEFAULT_DPI 75
+#define LCD_DISPLAY_CONFIGS 1
+#define LCD_DISPLAY_FPS 60
+#define LCD_DISPLAY_DEFAULT_DPI 150
+
+/* Currently SF cannot handle more than 1 config */
+#define HDMI_DISPLAY_CONFIGS 1
+#define HDMI_DISPLAY_FPS 60
+#define HDMI_DISPLAY_DEFAULT_DPI 75
+
 #define MAX_DISPLAY_ID (MAX_DISPLAYS - 1)
 #define INCH_TO_MM 25.4f
 
@@ -155,23 +159,32 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
     if (err)
         return err;
 
-    err = allocate_display(sizeof(display_t), PRIMARY_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
+    uint32_t disp_type = (hwc_dev->fb_dis.channel == OMAP_DSS_CHANNEL_DIGIT) ? DISP_TYPE_HDMI : DISP_TYPE_LCD;
+    uint32_t max_configs = (disp_type == DISP_TYPE_HDMI) ? HDMI_DISPLAY_CONFIGS : LCD_DISPLAY_CONFIGS;
+
+    if (disp_type == DISP_TYPE_HDMI)
+        ALOGI("Primary display is HDMI");
+
+    err = allocate_display(sizeof(display_t), max_configs, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
     if (err)
         return err;
 
-    display_config_t *config = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->configs[0];
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    display_config_t *config = &display->configs[0];
 
     config->xres = hwc_dev->fb_dis.timings.x_res;
     config->yres = hwc_dev->fb_dis.timings.y_res;
-    config->fps = PRIMARY_DISPLAY_FPS;
+    config->fps = (disp_type == DISP_TYPE_HDMI) ? HDMI_DISPLAY_FPS : LCD_DISPLAY_FPS;
 
     if (hwc_dev->fb_dis.width_in_mm && hwc_dev->fb_dis.height_in_mm) {
         config->xdpi = (int)(config->xres * INCH_TO_MM) / hwc_dev->fb_dis.width_in_mm;
         config->ydpi = (int)(config->yres * INCH_TO_MM) / hwc_dev->fb_dis.height_in_mm;
     } else {
-        config->xdpi = PRIMARY_DISPLAY_DEFAULT_DPI;
-        config->ydpi = PRIMARY_DISPLAY_DEFAULT_DPI;
+        config->xdpi = (disp_type == DISP_TYPE_HDMI) ? HDMI_DISPLAY_DEFAULT_DPI : LCD_DISPLAY_DEFAULT_DPI;
+        config->ydpi = (disp_type == DISP_TYPE_HDMI) ? HDMI_DISPLAY_DEFAULT_DPI : LCD_DISPLAY_DEFAULT_DPI;
     }
+
+    display->type = disp_type;
 
     return 0;
 }
@@ -186,7 +199,7 @@ int add_external_display(omap_hwc_device_t *hwc_dev)
         return err;
 
     /* Currently SF cannot handle more than 1 config */
-    err = allocate_display(sizeof(external_display_t), 1, &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
+    err = allocate_display(sizeof(external_display_t), HDMI_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
     if (err)
         return err;
 
@@ -196,14 +209,20 @@ int add_external_display(omap_hwc_device_t *hwc_dev)
 
     config->xres = ext->mirror_region.right - ext->mirror_region.left;
     config->yres = ext->mirror_region.bottom - ext->mirror_region.top;
-    config->fps = EXTERNAL_DISPLAY_FPS;
+    config->fps = HDMI_DISPLAY_FPS;
 
     if (info.width_in_mm && info.height_in_mm) {
         config->xdpi = (int)(config->xres * INCH_TO_MM) / info.width_in_mm;
         config->ydpi = (int)(config->yres * INCH_TO_MM) / info.height_in_mm;
     } else {
-        config->xdpi = EXTERNAL_DISPLAY_DEFAULT_DPI;
-        config->ydpi = EXTERNAL_DISPLAY_DEFAULT_DPI;
+        config->xdpi = HDMI_DISPLAY_DEFAULT_DPI;
+        config->ydpi = HDMI_DISPLAY_DEFAULT_DPI;
+    }
+
+    if (info.channel == OMAP_DSS_CHANNEL_DIGIT) {
+        display->base.type = DISP_TYPE_HDMI;
+    } else {
+        ALOGW("Unknown type of external display is connected");
     }
 
     /* Allocate backup buffers for FB rotation. This is required only if the FB tranform is
@@ -321,6 +340,14 @@ int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t cfg, c
     }
 
     return 0;
+}
+
+bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
+        return false;
+
+    return hwc_dev->displays[disp]->type == DISP_TYPE_HDMI;
 }
 
 void free_displays(omap_hwc_device_t *hwc_dev)

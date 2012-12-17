@@ -853,7 +853,7 @@ static uint32_t add_scaling_score(uint32_t score,
 
 static int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres, float xpy)
 {
-    int dis_ix = hwc_dev->on_tv ? 0 : 1;
+    int dis_ix = is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY) ? 0 : 1;
     struct _qdis {
         struct dsscomp_videomode modedb[MAX_DISPLAY_CONFIGS];
         struct dsscomp_display_info dis; /* variable-sized type; should be at end of struct */
@@ -962,8 +962,6 @@ static int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_
     ext->last_xres_used = xres;
     ext->last_yres_used = yres;
     ext->last_xpy = xpy;
-    if (d.dis.channel == OMAP_DSS_CHANNEL_DIGIT)
-        ext->on_tv = 1;
     return 0;
 }
 
@@ -1105,7 +1103,8 @@ static bool can_dss_render_all(omap_hwc_device_t *hwc_dev)
 {
     omap_hwc_ext_t *ext = &hwc_dev->ext;
     counts_t *num = &hwc_dev->counts;
-    bool on_tv = hwc_dev->on_tv || (ext->on_tv && ext->current.enabled);
+    bool on_tv = is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY) ||
+            (is_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL) && ext->current.enabled);
     bool tform = ext->current.enabled && (ext->current.rotation || ext->current.hflip);
 
     return  !hwc_dev->force_sgx &&
@@ -1132,7 +1131,8 @@ static inline bool can_dss_render_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_
 
     omap_hwc_ext_t *ext = &hwc_dev->ext;
     bool cloning = ext->current.enabled && (!ext->current.docking || (handle!=NULL ? dockable(layer) : 0));
-    bool on_tv = hwc_dev->on_tv || (ext->on_tv && cloning);
+    bool on_tv = is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY) ||
+            (is_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL) && cloning);
     bool tform = cloning && (ext->current.rotation || ext->current.hflip);
 
     return is_valid_layer(hwc_dev, layer, handle) &&
@@ -1863,7 +1863,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
      * Whilst the mode of the display is being changed drop compositions to the
      * display
      */
-    if (ext->last_mode == 0 && hwc_dev->on_tv) {
+    if (ext->last_mode == 0 && is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
         dsscomp->num_ovls = 0;
     }
 
@@ -1874,7 +1874,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
              num->composited_layers,
              num->possible_overlay_layers, num->scaled_layers,
              num->RGB, num->BGR, num->NV12,
-             ext->on_tv ? "tv+" : "",
+             is_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL) ? "tv+" : "",
              ext->current.enabled ? ext->current.docking ? "dock+" : "mirror+" : "OFF+",
              ext->current.rotation * 90,
              ext->current.hflip ? "+hflip" : "",
@@ -2184,7 +2184,7 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
     bool state = ext->hdmi_state;
 
     /* Ignore external HDMI logic if the primary display is HDMI */
-    if (hwc_dev->on_tv) {
+    if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
         ALOGI("Primary display is HDMI - skip clone/dock logic");
 
         if (state) {
@@ -2257,6 +2257,7 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
 
         remove_external_display(hwc_dev);
     }
+
     ALOGI("external display changed (state=%d, mirror={%s tform=%ddeg%s}, dock={%s tform=%ddeg%s%s}, tv=%d", state,
          ext->mirror.enabled ? "enabled" : "disabled",
          ext->mirror.rotation * 90,
@@ -2265,7 +2266,7 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
          ext->dock.rotation * 90,
          ext->dock.hflip ? "+hflip" : "",
          ext->force_dock ? " forced" : "",
-         ext->on_tv);
+         is_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL));
 
     pthread_mutex_unlock(&hwc_dev->lock);
 
@@ -2559,10 +2560,7 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
             hwc_dev->fb_dis.height_in_mm * hwc_dev->fb_dis.timings.y_res;
     }
 
-    if (hwc_dev->fb_dis.channel == OMAP_DSS_CHANNEL_DIGIT) {
-        ALOGI("Primary display is HDMI");
-        hwc_dev->on_tv = 1;
-    } else {
+    if (!is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
         hwc_dev->hdmi_fb_fd = open("/dev/graphics/fb1", O_RDWR);
         if (hwc_dev->hdmi_fb_fd < 0) {
             ALOGE("failed to open hdmi fb (%d)", errno);

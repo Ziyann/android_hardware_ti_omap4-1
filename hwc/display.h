@@ -18,6 +18,7 @@
 #define __DISPLAY__
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define MAX_DISPLAYS 3
 #define MAX_DISPLAY_CONFIGS 32
@@ -34,10 +35,18 @@ struct display_config {
 };
 typedef struct display_config display_config_t;
 
+enum disp_type {
+    DISP_TYPE_UNKNOWN,
+    DISP_TYPE_LCD,
+    DISP_TYPE_HDMI,
+};
+
 struct display {
     uint32_t num_configs;
     display_config_t *configs;
     uint32_t active_config_ix;
+
+    uint32_t type;
 };
 typedef struct display display_t;
 
@@ -57,6 +66,7 @@ void remove_external_display(omap_hwc_device_t *hwc_dev);
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev);
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs);
 int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t config, const uint32_t *attributes, int32_t *values);
+bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp);
 void free_displays(omap_hwc_device_t *hwc_dev);
 
 #endif
