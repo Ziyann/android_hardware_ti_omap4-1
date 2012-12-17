@@ -169,8 +169,6 @@ struct omap_hwc_device {
 
     counts_t counts;
 
-    int ion_fd;
-    struct ion_handle *ion_handles[2];
     bool use_sw_vsync;
 
     display_t *displays[MAX_DISPLAYS];

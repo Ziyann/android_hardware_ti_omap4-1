@@ -41,12 +41,6 @@
 
 #include <linux/fb.h>
 #include <linux/omapfb.h>
-#ifdef USE_TI_LIBION
-#include <ion_ti/ion.h>
-#else
-#include <ion/ion.h>
-#include "ion_ti_custom.h"
-#endif
 
 #include "hwc_dev.h"
 #include "display.h"
@@ -65,7 +59,6 @@
 #define MAX_HWC_LAYERS 32
 #define MAX_HW_OVERLAYS 4
 #define NUM_NONSCALING_OVERLAYS 1
-#define NUM_EXT_DISPLAY_BACK_BUFFERS 2
 #define ASPECT_RATIO_TOLERANCE 0.02f
 
 /* copied from: KK bionic/libc/kernel/common/linux/fb.h */
@@ -1182,9 +1175,10 @@ static int clone_layer(omap_hwc_device_t *hwc_dev, int ix) {
     * that of primary display, ion_handles would be NULL hence
     * the below logic doesn't execute.
     */
-    if (ix == 0 && hwc_dev->ion_handles[sync_id%2] && hwc_dev->use_sgx) {
+    struct ion_handle *ion_handle = get_external_display_ion_fb_handle(hwc_dev);
+    if (ix == 0 && ion_handle && hwc_dev->use_sgx) {
         o->addressing = OMAP_DSS_BUFADDR_ION;
-        o->ba = (int)hwc_dev->ion_handles[sync_id%2];
+        o->ba = (int)ion_handle;
     } else {
         o->addressing = OMAP_DSS_BUFADDR_OVL_IX;
         o->ba = ix;
@@ -1573,52 +1567,6 @@ void debug_post2(omap_hwc_device_t *hwc_dev, int nbufs)
     for (i=0; i < dsscomp->num_ovls; i++) {
         ALOGI("ovl[%d] ba %d", i, dsscomp->ovls[i].ba);
     }
-}
-
-static int free_tiler2d_buffers(omap_hwc_device_t *hwc_dev)
-{
-    int i;
-
-    for (i = 0 ; i < NUM_EXT_DISPLAY_BACK_BUFFERS; i++) {
-#ifdef USE_TI_LIBION
-        ion_free(hwc_dev->ion_fd, hwc_dev->ion_handles[i]);
-#else
-        ion_free(hwc_dev->ion_fd, (ion_user_handle_t) hwc_dev->ion_handles[i]);
-#endif
-
-        hwc_dev->ion_handles[i] = NULL;
-    }
-    return 0;
-}
-
-static int allocate_tiler2d_buffers(omap_hwc_device_t *hwc_dev)
-{
-    int ret, i;
-    size_t stride;
-
-    if (hwc_dev->ion_fd < 0) {
-        ALOGE("No ion fd, hence can't allocate tiler2d buffers");
-        return -1;
-    }
-
-    for (i = 0; i < NUM_EXT_DISPLAY_BACK_BUFFERS; i++) {
-        if (hwc_dev->ion_handles[i])
-            return 0;
-    }
-
-    for (i = 0 ; i < NUM_EXT_DISPLAY_BACK_BUFFERS; i++) {
-        ret = ion_alloc_tiler(hwc_dev->ion_fd, hwc_dev->fb_dev->base.width, hwc_dev->fb_dev->base.height,
-                                            TILER_PIXEL_FMT_32BIT, 0, &hwc_dev->ion_handles[i], &stride);
-        if (ret)
-            goto handle_error;
-
-        ALOGI("ion handle[%d][%p]", i, hwc_dev->ion_handles[i]);
-    }
-    return 0;
-
-handle_error:
-    free_tiler2d_buffers(hwc_dev);
-    return -1;
 }
 
 static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
@@ -2131,8 +2079,6 @@ static int hwc_device_close(hw_device_t* device)
             close(hwc_dev->hdmi_fb_fd);
         if (hwc_dev->fb_fd >= 0)
             close(hwc_dev->fb_fd);
-        if (hwc_dev->ion_fd >= 0)
-            ion_close(hwc_dev->ion_fd);
 
         /* pthread will get killed when parent process exits */
         pthread_mutex_destroy(&hwc_dev->lock);
@@ -2304,20 +2250,10 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
             } else
                 ext->mirror.enabled = 0;
         }
-        /* Allocate backup buffers for FB rotation
-        * This is required only if the FB tranform is different from that
-        * of the external display and the FB is not in TILER2D space
-        */
-        if (ext->mirror.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D))
-            allocate_tiler2d_buffers(hwc_dev);
 
         add_external_display(hwc_dev);
     } else {
         ext->last_mode = 0;
-        if (ext->mirror.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
-            /* free tiler 2D buffer on detach */
-            free_tiler2d_buffers(hwc_dev);
-        }
 
         remove_external_display(hwc_dev);
     }
@@ -2614,16 +2550,6 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
     err = init_primary_display(hwc_dev);
     if (err)
         goto done;
-
-    hwc_dev->ion_fd = ion_open();
-    if (hwc_dev->ion_fd < 0) {
-        ALOGE("failed to open ion driver (%d)", errno);
-    }
-
-    int i;
-    for (i = 0; i < NUM_EXT_DISPLAY_BACK_BUFFERS; i++) {
-        hwc_dev->ion_handles[i] = NULL;
-    }
 
     /* use default value in case some of requested display parameters missing */
     hwc_dev->ext.lcd_xpy = 1.0;
