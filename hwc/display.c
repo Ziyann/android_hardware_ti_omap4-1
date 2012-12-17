@@ -362,6 +362,25 @@ struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev
     }
 }
 
+int set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays) {
+    size_t i;
+
+    if (num_displays > MAX_DISPLAYS)
+        num_displays = MAX_DISPLAYS;
+
+    for (i = 0; i < num_displays; i++) {
+        if (hwc_dev->displays[i])
+            hwc_dev->displays[i]->contents = displays[i];
+    }
+
+    for ( ; i < MAX_DISPLAYS; i++) {
+        if (hwc_dev->displays[i])
+            hwc_dev->displays[i]->contents = NULL;
+    }
+
+    return 0;
+}
+
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs)
 {
     if (!numConfigs)
@@ -429,6 +448,52 @@ int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t cfg, c
     }
 
     return 0;
+}
+
+static int get_layer_stack(omap_hwc_device_t *hwc_dev, int disp, uint32_t *stack)
+{
+    hwc_layer_stack_t stackInfo = {.dpy = disp};
+    void *param = &stackInfo;
+    int err = hwc_dev->procs->extension_cb(hwc_dev->procs, HWC_EXTENDED_OP_LAYERSTACK, &param, sizeof(stackInfo));
+    if (err)
+        return err;
+
+    *stack = stackInfo.stack;
+
+    return 0;
+}
+
+uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
+{
+    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
+        return DISP_MODE_INVALID;
+
+    if (disp == HWC_DISPLAY_PRIMARY)
+        return DISP_MODE_LEGACY;
+
+    display_t *display = hwc_dev->displays[disp];
+
+    if (!display->contents)
+        return DISP_MODE_INVALID;
+
+    if (!(display->contents->flags & HWC_EXTENDED_API) || !hwc_dev->procs || !hwc_dev->procs->extension_cb)
+        return DISP_MODE_LEGACY;
+
+    uint32_t primaryStack, stack;
+    int err;
+
+    err = get_layer_stack(hwc_dev, HWC_DISPLAY_PRIMARY, &primaryStack);
+    if (err)
+        return DISP_MODE_INVALID;
+
+    err = get_layer_stack(hwc_dev, disp, &stack);
+    if (err)
+        return DISP_MODE_INVALID;
+
+    if (stack != primaryStack)
+        return DISP_MODE_PRESENTATION;
+
+    return DISP_MODE_LEGACY;
 }
 
 bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)

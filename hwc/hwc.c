@@ -1540,6 +1540,8 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     memset(dsscomp, 0x0, sizeof(*dsscomp));
     dsscomp->sync_id = sync_id++;
 
+    set_display_contents(hwc_dev, numDisplays, displays);
+
     gather_layer_statistics(hwc_dev, list);
 
     decide_supported_cloning(hwc_dev);

@@ -25,6 +25,8 @@
 #define EXTERNAL_DISPLAY_BACK_BUFFERS 2
 
 struct ion_handle;
+typedef struct hwc_display_contents_1 hwc_display_contents_1_t;
+typedef struct omap_hwc_device omap_hwc_device_t;
 
 struct display_config {
     int xres;
@@ -41,6 +43,12 @@ enum disp_type {
     DISP_TYPE_HDMI,
 };
 
+enum disp_mode {
+    DISP_MODE_INVALID,
+    DISP_MODE_LEGACY,
+    DISP_MODE_PRESENTATION,
+};
+
 struct display {
     uint32_t num_configs;
     display_config_t *configs;
@@ -49,6 +57,8 @@ struct display {
     uint32_t type;
 
     float transform_matrix[2][3];
+
+    hwc_display_contents_1_t *contents;
 };
 typedef struct display display_t;
 
@@ -60,8 +70,6 @@ struct external_display {
 };
 typedef struct external_display external_display_t;
 
-typedef struct omap_hwc_device omap_hwc_device_t;
-
 int init_primary_display(omap_hwc_device_t *hwc_dev);
 void reset_primary_display(omap_hwc_device_t *hwc_dev);
 
@@ -69,8 +77,11 @@ int add_external_display(omap_hwc_device_t *hwc_dev);
 void remove_external_display(omap_hwc_device_t *hwc_dev);
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev);
 
+int set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
+
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs);
 int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t config, const uint32_t *attributes, int32_t *values);
+uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp);
 
 bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp);
 
