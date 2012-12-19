@@ -243,18 +243,18 @@ static void dump_set_info(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t* 
 static int sync_id = 0;
 
 #ifdef OMAP_ENHANCEMENT_S3D
-static uint32_t get_s3d_layout_type(hwc_layer_1_t *layer)
+static uint32_t get_s3d_layout_type(hwc_layer_1_t const *layer)
 {
     return (layer->flags & S3DLayoutTypeMask) >> S3DLayoutTypeShift;
 }
 
-static uint32_t get_s3d_layout_order(hwc_layer_1_t *layer)
+static uint32_t get_s3d_layout_order(hwc_layer_1_t const *layer)
 {
     return (layer->flags & S3DLayoutOrderMask) >> S3DLayoutOrderShift;
 }
 #endif
 
-static bool scaled(hwc_layer_1_t *layer)
+static bool is_scaled(hwc_layer_1_t const *layer)
 {
     int w = WIDTH(layer->sourceCrop);
     int h = HEIGHT(layer->sourceCrop);
@@ -271,7 +271,7 @@ static bool scaled(hwc_layer_1_t *layer)
     return res;
 }
 
-static bool is_protected(hwc_layer_1_t *layer)
+static bool is_protected(hwc_layer_1_t const *layer)
 {
     IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
 
@@ -280,28 +280,33 @@ static bool is_protected(hwc_layer_1_t *layer)
 
 #define is_BLENDED(layer) ((layer)->blending != HWC_BLENDING_NONE)
 
-static bool is_RGB(IMG_native_handle_t *handle)
+static bool is_rgb(hwc_layer_1_t const *layer)
 {
+    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
+
     return is_rgb_format(handle->iFormat);
 }
 
-static bool is_BGR(IMG_native_handle_t *handle)
+static bool is_bgr(hwc_layer_1_t const *layer)
 {
+    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
+
     return is_bgr_format(handle->iFormat);
 }
 
-static bool is_NV12(IMG_native_handle_t *handle)
+static bool is_nv12(hwc_layer_1_t const *layer)
 {
+    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
+
     return is_nv12_format(handle->iFormat);
 }
 
-static bool is_upscaled_NV12(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer)
+static bool is_upscaled_nv12(omap_hwc_device_t *hwc_dev, hwc_layer_1_t const *layer)
 {
     if (!layer)
         return false;
 
-    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
-    if (!is_NV12(handle))
+    if (!is_nv12(layer))
         return false;
 
     int w = WIDTH(layer->sourceCrop);
@@ -314,16 +319,18 @@ static bool is_upscaled_NV12(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer)
             HEIGHT(layer->displayFrame) >= h * hwc_dev->upscaled_nv12_limit);
 }
 
-static bool dockable(hwc_layer_1_t *layer)
+static bool is_dockable(hwc_layer_1_t const *layer)
 {
     IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
 
     return (handle->usage & GRALLOC_USAGE_EXTERNAL_DISP) != 0;
 }
 
-static uint32_t mem1d(IMG_native_handle_t *handle)
+static uint32_t get_required_mem1d_size(hwc_layer_1_t const *layer)
 {
-    if (handle == NULL || is_NV12(handle))
+    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
+
+    if (handle == NULL || is_nv12(layer))
         return 0;
 
     int bpp = handle->iFormat == HAL_PIXEL_FORMAT_RGB_565 ? 2 : 4;
@@ -364,15 +371,16 @@ static void setup_layer_base(struct dss2_ovl_cfg *oc, int index, uint32_t format
 }
 
 static void setup_layer(omap_hwc_device_t *hwc_dev __unused, struct dss2_ovl_info *ovl,
-                        hwc_layer_1_t *layer, int index, uint32_t format, int width, int height)
+                        hwc_layer_1_t *layer, int index)
 {
+    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
     struct dss2_ovl_cfg *oc = &ovl->cfg;
 
 #ifdef DUMP_LAYERS
     dump_layer(layer);
 #endif
 
-    setup_layer_base(oc, index, format, is_BLENDED(layer), width, height);
+    setup_layer_base(oc, index, handle->iFormat, is_BLENDED(layer), handle->iWidth, handle->iHeight);
 
     /* convert transformation - assuming 0-set config */
     if (layer->transform & HWC_TRANSFORM_FLIP_H)
@@ -591,7 +599,7 @@ static void adjust_primary_display_layer(omap_hwc_device_t *hwc_dev, struct dss2
 
 static bool can_scale(uint32_t src_w, uint32_t src_h, uint32_t dst_w, uint32_t dst_h, bool is_2d,
                       struct dsscomp_display_info *dis, struct dsscomp_platform_info *limits,
-                      uint32_t pclk, IMG_native_handle_t *handle)
+                      uint32_t pclk)
 {
     uint32_t fclk = limits->fclk / 1000;
     uint32_t min_src_w = DIV_ROUND_UP(src_w, is_2d ? limits->max_xdecim_2d : limits->max_xdecim_1d);
@@ -632,12 +640,18 @@ static bool can_scale(uint32_t src_w, uint32_t src_h, uint32_t dst_w, uint32_t d
     return true;
 }
 
-static bool can_scale_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer, IMG_native_handle_t *handle)
+static bool can_scale_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t const *layer)
 {
+    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
+
     int src_w = WIDTH(layer->sourceCrop);
     int src_h = HEIGHT(layer->sourceCrop);
     int dst_w = WIDTH(layer->displayFrame);
     int dst_h = HEIGHT(layer->displayFrame);
+
+    if (handle)
+        if (get_format_bpp(handle->iFormat) == 32 && src_w > 1280 && dst_w * 3 < src_w)
+            return false;
 
     /* account for 90-degree rotation */
     if (layer->transform & HWC_TRANSFORM_ROT_90)
@@ -645,14 +659,16 @@ static bool can_scale_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer, IM
 
     /* NOTE: layers should be able to be scaled externally since
        framebuffer is able to be scaled on selected external resolution */
-    return can_scale(src_w, src_h, dst_w, dst_h, is_NV12(handle), &hwc_dev->fb_dis, &hwc_dev->platform_limits,
-                     hwc_dev->fb_dis.timings.pixel_clock, handle);
+    return can_scale(src_w, src_h, dst_w, dst_h, is_nv12(layer), &hwc_dev->fb_dis, &hwc_dev->platform_limits,
+                     hwc_dev->fb_dis.timings.pixel_clock);
 }
 
-static bool is_valid_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer, IMG_native_handle_t *handle)
+static bool is_valid_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t const *layer)
 {
+    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
+
     /* Skip layers are handled by SF */
-    if ((layer->flags & HWC_SKIP_LAYER) || !handle)
+    if ((layer->flags & HWC_SKIP_LAYER) || !layer->handle)
         return false;
 
     if (layer->compositionType == HWC_FRAMEBUFFER_TARGET)
@@ -662,14 +678,14 @@ static bool is_valid_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer, IMG
         return false;
 
     /* 1D buffers: no transform, must fit in TILER slot */
-    if (!is_NV12(handle)) {
+    if (!is_nv12(layer)) {
         if (layer->transform)
             return false;
-        if (mem1d(handle) > hwc_dev->platform_limits.tiler1d_slot_size)
+        if (get_required_mem1d_size(layer) > hwc_dev->platform_limits.tiler1d_slot_size)
             return false;
     }
 
-    return can_scale_layer(hwc_dev, layer, handle);
+    return can_scale_layer(hwc_dev, layer);
 }
 
 static uint32_t add_scaling_score(uint32_t score,
@@ -770,7 +786,7 @@ static int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_
             (d.modedb[i].vmode & ~FB_VMODE_INTERLACED) ||
             !can_scale(xres, yres, ext_fb_xres, ext_fb_yres,
                        1, &d.dis, &hwc_dev->platform_limits,
-                       1000000000 / d.modedb[i].pixclock, NULL))
+                       1000000000 / d.modedb[i].pixclock))
             continue;
 
         /* prefer CEA modes */
@@ -813,7 +829,7 @@ static int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_
         if (!d.dis.timings.pixel_clock ||
             !can_scale(xres, yres, ext_fb_xres, ext_fb_yres,
                        1, &d.dis, &hwc_dev->platform_limits,
-                       d.dis.timings.pixel_clock, NULL)) {
+                       d.dis.timings.pixel_clock)) {
             ALOGW("DSS scaler cannot support HDMI cloning");
             return -1;
         }
@@ -836,7 +852,6 @@ static void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_cont
     /* Figure out how many layers we can support via DSS */
     for (i = 0; list && i < list->numHwLayers; i++) {
         hwc_layer_1_t *layer = &list->hwLayers[i];
-        IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
 #ifdef OMAP_ENHANCEMENT_S3D
         uint32_t s3d_layout_type = get_s3d_layout_type(layer);
 #endif
@@ -848,7 +863,7 @@ static void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_cont
             layer->compositionType = HWC_FRAMEBUFFER;
         }
 
-        if (is_valid_layer(hwc_dev, layer, handle)) {
+        if (is_valid_layer(hwc_dev, layer)) {
 #ifdef OMAP_ENHANCEMENT_S3D
             if (s3d_layout_type != eMono) {
                 /* For now we can only handle 1 S3D layer, skip any additional ones */
@@ -857,7 +872,7 @@ static void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_cont
                     continue;
                 } else if (num->s3d == 0) {
                     /* For now, S3D layer is made a dockable layer to trigger docking logic. */
-                    if (!dockable(layer)) {
+                    if (!is_dockable(layer)) {
                         num->dockable++;
                     }
                     num->s3d++;
@@ -869,23 +884,23 @@ static void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_cont
             num->possible_overlay_layers++;
 
             /* NV12 layers can only be rendered on scaling overlays */
-            if (scaled(layer) || is_NV12(handle) || hwc_dev->primary_transform)
+            if (is_scaled(layer) || is_nv12(layer) || hwc_dev->primary_transform)
                 num->scaled_layers++;
 
-            if (is_BGR(handle))
+            if (is_bgr(layer))
                 num->BGR++;
-            else if (is_RGB(handle))
+            else if (is_rgb(layer))
                 num->RGB++;
-            else if (is_NV12(handle))
+            else if (is_nv12(layer))
                 num->NV12++;
 
-            if (dockable(layer))
+            if (is_dockable(layer))
                 num->dockable++;
 
             if (is_protected(layer))
                 num->protected++;
 
-            num->mem += mem1d(handle);
+            num->mem += get_required_mem1d_size(layer);
         }
     }
 }
@@ -986,24 +1001,23 @@ static bool can_dss_render_all(omap_hwc_device_t *hwc_dev)
 
 static inline bool can_dss_render_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer)
 {
-    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
-
     omap_hwc_ext_t *ext = &hwc_dev->ext;
-    bool cloning = ext->current.enabled && (!ext->current.docking || (handle!=NULL ? dockable(layer) : 0));
+    bool cloning = ext->current.enabled &&
+                   (!ext->current.docking || (layer->handle != NULL ? is_dockable(layer) : 0));
     bool on_tv = is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY) ||
             (is_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL) && cloning);
     bool tform = cloning && (ext->current.rotation || ext->current.hflip);
 
-    return is_valid_layer(hwc_dev, layer, handle) &&
+    return is_valid_layer(hwc_dev, layer) &&
            /* cannot rotate non-NV12 layers on external display */
-           (!tform || is_NV12(handle)) &&
+           (!tform || is_nv12(layer)) &&
            /* skip non-NV12 layers if also using SGX (if nv12_only flag is set) */
-           (!hwc_dev->flags_nv12_only || (!hwc_dev->use_sgx || is_NV12(handle))) &&
+           (!hwc_dev->flags_nv12_only || (!hwc_dev->use_sgx || is_nv12(layer))) &&
            /* make sure RGB ordering is consistent (if rgb_order flag is set) */
-           (!(hwc_dev->swap_rb ? is_RGB(handle) : is_BGR(handle)) ||
+           (!(hwc_dev->swap_rb ? is_rgb(layer) : is_bgr(layer)) ||
             !hwc_dev->flags_rgb_order) &&
            /* TV can only render RGB */
-           !(on_tv && is_BGR(handle));
+           !(on_tv && is_bgr(layer));
 }
 
 static inline int display_area(struct dss2_ovl_info *o)
@@ -1498,21 +1512,22 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     uint32_t mem_used = 0;
     for (i = 0; list && i < list->numHwLayers && !blit_all; i++) {
         hwc_layer_1_t *layer = &list->hwLayers[i];
-        IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
 
         if (dsscomp->num_ovls < num->max_hw_overlays &&
             can_dss_render_layer(hwc_dev, layer) &&
             (!hwc_dev->force_sgx ||
              /* render protected and dockable layers via DSS */
              is_protected(layer) ||
-             is_upscaled_NV12(hwc_dev, layer) ||
-             (hwc_dev->ext.current.docking && hwc_dev->ext.current.enabled && dockable(layer))) &&
-            mem_used + mem1d(handle) <= hwc_dev->platform_limits.tiler1d_slot_size &&
+             is_upscaled_nv12(hwc_dev, layer) ||
+             (hwc_dev->ext.current.docking &&
+              hwc_dev->ext.current.enabled &&
+              is_dockable(layer))) &&
+            mem_used + get_required_mem1d_size(layer) <= hwc_dev->platform_limits.tiler1d_slot_size &&
             /* can't have a transparent overlay in the middle of the framebuffer stack */
             !(is_BLENDED(layer) && fb_z >= 0)) {
 
             /* render via DSS overlay */
-            mem_used += mem1d(handle);
+            mem_used += get_required_mem1d_size(layer);
             layer->compositionType = HWC_OVERLAY;
             /*
              * This hint will not be used in vanilla ICS, but maybe in
@@ -1528,13 +1543,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
             hwc_dev->buffers[dsscomp->num_ovls] = layer->handle;
             //ALOGI("dss buffers[%d] = %p", dsscomp->num_ovls, hwc_dev->buffers[dsscomp->num_ovls]);
 
-            setup_layer(hwc_dev,
-                        &dsscomp->ovls[dsscomp->num_ovls],
-                        layer,
-                        z,
-                        handle->iFormat,
-                        handle->iWidth,
-                        handle->iHeight);
+            setup_layer(hwc_dev, &dsscomp->ovls[dsscomp->num_ovls], layer, z);
 
             dsscomp->ovls[dsscomp->num_ovls].cfg.ix = dsscomp->num_ovls + hwc_dev->primary_transform;
             dsscomp->ovls[dsscomp->num_ovls].addressing = OMAP_DSS_BUFADDR_LAYER_IX;
@@ -1542,8 +1551,8 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
 
             /* ensure GFX layer is never scaled */
             if ((dsscomp->num_ovls == 0) && (!hwc_dev->primary_transform)) {
-                scaled_gfx = scaled(layer) || is_NV12(handle);
-            } else if (scaled_gfx && !scaled(layer) && !is_NV12(handle)) {
+                scaled_gfx = is_scaled(layer) || is_nv12(layer);
+            } else if (scaled_gfx && !is_scaled(layer) && !is_nv12(layer)) {
                 /* swap GFX layer with this one */
                 dsscomp->ovls[dsscomp->num_ovls].cfg.ix = 0;
                 dsscomp->ovls[0].cfg.ix = dsscomp->num_ovls;
@@ -1551,7 +1560,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
             }
 
             /* remember largest dockable layer */
-            if (dockable(layer) &&
+            if (is_dockable(layer) &&
                 (ix_docking < 0 ||
                  display_area(&dsscomp->ovls[dsscomp->num_ovls]) > display_area(&dsscomp->ovls[ix_docking])))
                 ix_docking = dsscomp->num_ovls;
