@@ -770,10 +770,6 @@ static bool can_scale(uint32_t src_w, uint32_t src_h, uint32_t dst_w, uint32_t d
     if (dst_w * 4 < src_w)
         return false;
 
-    if (handle)
-        if (get_format_bpp(handle->iFormat) == 32 && src_w > 1280 && dst_w * 3 < src_w)
-            return false;
-
     /* max horizontal downscale is 4, or the fclk/pixclk */
     if (fclk > pclk * limits->max_downscale)
         fclk = pclk * limits->max_downscale;
