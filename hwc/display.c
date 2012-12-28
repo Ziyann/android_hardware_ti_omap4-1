@@ -30,6 +30,8 @@
 #define PRIMARY_DISPLAY_CONFIGS 1
 #define PRIMARY_DISPLAY_FPS 60
 #define PRIMARY_DISPLAY_DEFAULT_DPI 150
+#define EXTERNAL_DISPLAY_FPS 60
+#define EXTERNAL_DISPLAY_DEFAULT_DPI 75
 #define MAX_DISPLAY_ID (MAX_DISPLAYS - 1)
 #define INCH_TO_MM 25.4f
 
@@ -77,15 +79,29 @@ err_out:
     return err;
 }
 
-int init_primary_display(omap_hwc_device_t *hwc_dev)
+static int get_display_info(omap_hwc_device_t *hwc_dev, int disp, struct dsscomp_display_info *info)
 {
-    int ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_QUERY_DISPLAY, &hwc_dev->fb_dis);
+    memset(info, 0, sizeof(*info));
+    info->ix = disp;
+
+    int ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_QUERY_DISPLAY, info);
     if (ret) {
-        ALOGE("failed to get display info (%d): %m", errno);
+        ALOGE("Failed to get display info (%d): %m", errno);
         return -errno;
     }
 
-    int err = allocate_display(PRIMARY_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
+    return 0;
+}
+
+int init_primary_display(omap_hwc_device_t *hwc_dev)
+{
+    int err;
+
+    err = get_display_info(hwc_dev, HWC_DISPLAY_PRIMARY, &hwc_dev->fb_dis);
+    if (err)
+        return err;
+
+    err = allocate_display(PRIMARY_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
     if (err)
         return err;
 
@@ -104,6 +120,45 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
     }
 
     return 0;
+}
+
+int add_external_display(omap_hwc_device_t *hwc_dev)
+{
+    int err;
+
+    struct dsscomp_display_info info;
+    err = get_display_info(hwc_dev, HWC_DISPLAY_EXTERNAL, &info);
+    if (err)
+        return err;
+
+    /* Currently SF cannot handle more than 1 config */
+    err = allocate_display(1, &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
+    if (err)
+        return err;
+
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+    display_config_t *config = &display->configs[0];
+    omap_hwc_ext_t *ext = &hwc_dev->ext;
+
+    config->xres = ext->mirror_region.right - ext->mirror_region.left;
+    config->yres = ext->mirror_region.bottom - ext->mirror_region.top;
+    config->fps = EXTERNAL_DISPLAY_FPS;
+
+    if (info.width_in_mm && info.height_in_mm) {
+        config->xdpi = (int)(config->xres * INCH_TO_MM) / info.width_in_mm;
+        config->ydpi = (int)(config->yres * INCH_TO_MM) / info.height_in_mm;
+    } else {
+        config->xdpi = EXTERNAL_DISPLAY_DEFAULT_DPI;
+        config->ydpi = EXTERNAL_DISPLAY_DEFAULT_DPI;
+    }
+
+    return 0;
+}
+
+void remove_external_display(omap_hwc_device_t *hwc_dev)
+{
+    free_display(hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
+    hwc_dev->displays[HWC_DISPLAY_EXTERNAL] = NULL;
 }
 
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs)
