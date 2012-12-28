@@ -139,7 +139,6 @@ struct omap_hwc_device {
     omap_hwc_ext_t ext;         /* external mirroring data */
     int idle;
 
-    float primary_m[2][3];       /* internal transformation matrix */
     int primary_transform;
     int primary_rotation;
     hwc_rect_t primary_region;
