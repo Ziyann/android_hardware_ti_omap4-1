@@ -254,9 +254,10 @@ static uint32_t get_s3d_layout_order(hwc_layer_1_t const *layer)
 }
 #endif
 
-static void setup_layer_base(struct dss2_ovl_cfg *oc, int index, uint32_t format,
-                             bool blended, int width, int height)
+static void setup_overlay(int index, uint32_t format, bool blended,
+                          int width, int height, struct dss2_ovl_info *ovl)
 {
+    struct dss2_ovl_cfg *oc = &ovl->cfg;
     /* YUV2RGB conversion */
     const struct omap_dss_cconv_coefs ctbl_bt601_5 = {
         298,  409,    0,  298, -208, -100,  298,    0,  517, 0,
@@ -286,8 +287,8 @@ static void setup_layer_base(struct dss2_ovl_cfg *oc, int index, uint32_t format
     oc->vc1.enable = 0;
 }
 
-static void setup_layer(omap_hwc_device_t *hwc_dev __unused, struct dss2_ovl_info *ovl,
-                        hwc_layer_1_t *layer, int index)
+static void adjust_overlay_to_layer(omap_hwc_device_t *hwc_dev __unused, struct dss2_ovl_info *ovl,
+                                    hwc_layer_1_t const *layer, int index)
 {
     IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
     struct dss2_ovl_cfg *oc = &ovl->cfg;
@@ -296,7 +297,7 @@ static void setup_layer(omap_hwc_device_t *hwc_dev __unused, struct dss2_ovl_inf
     dump_layer(layer);
 #endif
 
-    setup_layer_base(oc, index, handle->iFormat, is_blended_layer(layer), handle->iWidth, handle->iHeight);
+    setup_overlay(index, handle->iFormat, is_blended_layer(layer), handle->iWidth, handle->iHeight, ovl);
 
     /* convert transformation - assuming 0-set config */
     if (layer->transform & HWC_TRANSFORM_FLIP_H)
@@ -387,9 +388,10 @@ static void set_ext_matrix(omap_hwc_ext_t *ext, struct hwc_rect region)
     translate_matrix(ext->m, ext->xres >> 1, ext->yres >> 1);
 }
 
-static int
-crop_to_rect(struct dss2_ovl_cfg *cfg, struct hwc_rect vis_rect)
+static int crop_overlay_to_rect(struct hwc_rect vis_rect, struct dss2_ovl_info *ovl)
 {
+    struct dss2_ovl_cfg *oc = &ovl->cfg;
+
     struct {
         int xy[2];
         int wh[2];
@@ -398,22 +400,22 @@ crop_to_rect(struct dss2_ovl_cfg *cfg, struct hwc_rect vis_rect)
         int lt[2];
         int rb[2];
     } vis;
-    win.xy[0] = cfg->win.x; win.xy[1] = cfg->win.y;
-    win.wh[0] = cfg->win.w; win.wh[1] = cfg->win.h;
-    crop.xy[0] = cfg->crop.x; crop.xy[1] = cfg->crop.y;
-    crop.wh[0] = cfg->crop.w; crop.wh[1] = cfg->crop.h;
+    win.xy[0] = oc->win.x; win.xy[1] = oc->win.y;
+    win.wh[0] = oc->win.w; win.wh[1] = oc->win.h;
+    crop.xy[0] = oc->crop.x; crop.xy[1] = oc->crop.y;
+    crop.wh[0] = oc->crop.w; crop.wh[1] = oc->crop.h;
     vis.lt[0] = vis_rect.left; vis.lt[1] = vis_rect.top;
     vis.rb[0] = vis_rect.right; vis.rb[1] = vis_rect.bottom;
 
     int c;
-    bool swap = cfg->rotation & 1;
+    bool swap = oc->rotation & 1;
 
     /* align crop window with display coordinates */
     if (swap)
         crop.xy[1] -= (crop.wh[1] = -crop.wh[1]);
-    if (cfg->rotation & 2)
+    if (oc->rotation & 2)
         crop.xy[!swap] -= (crop.wh[!swap] = -crop.wh[!swap]);
-    if ((!cfg->mirror) ^ !(cfg->rotation & 2))
+    if ((!oc->mirror) ^ !(oc->rotation & 2))
         crop.xy[swap] -= (crop.wh[swap] = -crop.wh[swap]);
 
     for (c = 0; c < 2; c++) {
@@ -445,24 +447,25 @@ crop_to_rect(struct dss2_ovl_cfg *cfg, struct hwc_rect vis_rect)
     }
 
     /* realign crop window to buffer coordinates */
-    if (cfg->rotation & 2)
+    if (oc->rotation & 2)
         crop.xy[!swap] -= (crop.wh[!swap] = -crop.wh[!swap]);
-    if ((!cfg->mirror) ^ !(cfg->rotation & 2))
+    if ((!oc->mirror) ^ !(oc->rotation & 2))
         crop.xy[swap] -= (crop.wh[swap] = -crop.wh[swap]);
     if (swap)
         crop.xy[1] -= (crop.wh[1] = -crop.wh[1]);
 
-    cfg->win.x = win.xy[0]; cfg->win.y = win.xy[1];
-    cfg->win.w = win.wh[0]; cfg->win.h = win.wh[1];
-    cfg->crop.x = crop.xy[0]; cfg->crop.y = crop.xy[1];
-    cfg->crop.w = crop.wh[0]; cfg->crop.h = crop.wh[1];
+    oc->win.x = win.xy[0]; oc->win.y = win.xy[1];
+    oc->win.w = win.wh[0]; oc->win.h = win.wh[1];
+    oc->crop.x = crop.xy[0]; oc->crop.y = crop.xy[1];
+    oc->crop.w = crop.wh[0]; oc->crop.h = crop.wh[1];
 
     return 0;
 }
 
-static void apply_transform(transform_matrix transform, struct dss2_ovl_cfg *oc)
+static void transform_overlay(transform_matrix transform, struct dss2_ovl_info *ovl)
 {
     float x, y, w, h;
+    struct dss2_ovl_cfg *oc = &ovl->cfg;
 
     /* display position */
     x = transform[0][0] * oc->win.x + transform[0][1] * oc->win.y + transform[0][2];
@@ -475,18 +478,18 @@ static void apply_transform(transform_matrix transform, struct dss2_ovl_cfg *oc)
     oc->win.h = round_float(h > 0 ? h : -h);
 }
 
-static void adjust_ext_layer(omap_hwc_ext_t *ext, struct dss2_ovl_info *ovl)
+static void adjust_overlay_to_external_display(omap_hwc_ext_t *ext, struct dss2_ovl_info *ovl)
 {
     struct dss2_ovl_cfg *oc = &ovl->cfg;
 
     /* crop to clone region if mirroring */
     if (!ext->current.docking &&
-        crop_to_rect(&ovl->cfg, ext->mirror_region) != 0) {
+        crop_overlay_to_rect(ext->mirror_region, ovl) != 0) {
         ovl->cfg.enabled = 0;
         return;
     }
 
-    apply_transform(ext->m, oc);
+    transform_overlay(ext->m, ovl);
 
     /* combining transformations: F^a*R^b*F^i*R^j = F^(a+b)*R^(j+b*(-1)^i), because F*R = R^(-1)*F */
     oc->rotation += (oc->mirror ? -1 : 1) * ext->current.rotation;
@@ -495,18 +498,18 @@ static void adjust_ext_layer(omap_hwc_ext_t *ext, struct dss2_ovl_info *ovl)
         oc->mirror = !oc->mirror;
 }
 
-static void adjust_primary_display_layer(omap_hwc_device_t *hwc_dev, struct dss2_ovl_info *ovl)
+static void adjust_overlay_to_primary_display(omap_hwc_device_t *hwc_dev, struct dss2_ovl_info *ovl)
 {
     struct dss2_ovl_cfg *oc = &ovl->cfg;
 
-    if (crop_to_rect(&ovl->cfg, hwc_dev->primary_region) != 0) {
-        ovl->cfg.enabled = 0;
+    if (crop_overlay_to_rect(hwc_dev->primary_region, ovl) != 0) {
+        oc->enabled = 0;
         return;
     }
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
 
-    apply_transform(display->transform_matrix, oc);
+    transform_overlay(display->transform_matrix, ovl);
 
     /* combining transformations: F^a*R^b*F^i*R^j = F^(a+b)*R^(j+b*(-1)^i), because F*R = R^(-1)*F */
     oc->rotation += (oc->mirror ? -1 : 1) * hwc_dev->primary_rotation;
@@ -825,18 +828,19 @@ static inline bool can_dss_render_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_
            !(on_tv && is_bgr_layer(layer));
 }
 
-static inline int display_area(struct dss2_ovl_info *o)
+static inline int get_overlay_display_area(struct dss2_ovl_info const *ovl)
 {
-    return o->cfg.win.w * o->cfg.win.h;
+    return ovl->cfg.win.w * ovl->cfg.win.h;
 }
 
-static int clone_layer(omap_hwc_device_t *hwc_dev, int ix) {
+static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix)
+{
     struct dsscomp_setup_dispc_data *dsscomp = &hwc_dev->comp_data.dsscomp_data;
     int ext_ovl_ix = dsscomp->num_ovls - hwc_dev->post2_layers;
     struct dss2_ovl_info *o = &dsscomp->ovls[dsscomp->num_ovls];
 
     if (dsscomp->num_ovls >= MAX_HW_OVERLAYS) {
-        ALOGE("**** cannot clone layer #%d. using all %d overlays.", ix, dsscomp->num_ovls);
+        ALOGE("**** cannot clone overlay #%d. using all %d overlays.", ix, dsscomp->num_ovls);
         return -EBUSY;
     }
 
@@ -847,7 +851,7 @@ static int clone_layer(omap_hwc_device_t *hwc_dev, int ix) {
     o->cfg.mgr_ix = 1;
     /*
     * Here the assumption is that overlay0 is the one attached to FB.
-    * Hence this clone_layer call is for FB cloning (provided use_sgx is true).
+    * Hence this clone_overlay call is for FB cloning (provided use_sgx is true).
     */
     /* For the external displays whose transform is the same as
     * that of primary display, ion_handles would be NULL hence
@@ -865,16 +869,17 @@ static int clone_layer(omap_hwc_device_t *hwc_dev, int ix) {
     /* use distinct z values (to simplify z-order checking) */
     o->cfg.zorder += hwc_dev->post2_layers;
 
-    adjust_ext_layer(&hwc_dev->ext, o);
+    adjust_overlay_to_external_display(&hwc_dev->ext, o);
     dsscomp->num_ovls++;
     return 0;
 }
 
-static int clone_external_layer(omap_hwc_device_t *hwc_dev, int ix) {
+static int dock_overlay(omap_hwc_device_t *hwc_dev, int ix)
+{
     struct dsscomp_setup_dispc_data *dsscomp = &hwc_dev->comp_data.dsscomp_data;
     omap_hwc_ext_t *ext = &hwc_dev->ext;
 
-    /* mirror only 1 external layer */
+    /* mirror only 1 overlay */
     struct dss2_ovl_info *o = &dsscomp->ovls[ix];
 
     /* full screen video after transformation */
@@ -908,7 +913,7 @@ static int clone_external_layer(omap_hwc_device_t *hwc_dev, int ix) {
     };
     set_ext_matrix(&hwc_dev->ext, region);
 
-    return clone_layer(hwc_dev, ix);
+    return clone_overlay(hwc_dev, ix);
 }
 
 #ifdef OMAP_ENHANCEMENT_S3D
@@ -970,8 +975,8 @@ static void enable_s3d_hdmi(omap_hwc_device_t *hwc_dev, bool enable)
     hwc_dev->ext.s3d_enabled = enable;
 }
 
-static void adjust_ext_s3d_layer(omap_hwc_device_t *hwc_dev,
-                                 struct dss2_ovl_info *ovl, bool left_view)
+static void adjust_overlay_to_s3d_ext_display(omap_hwc_device_t *hwc_dev,
+                                              bool left_view, struct dss2_ovl_info *ovl)
 {
     struct dss2_ovl_cfg *oc = &ovl->cfg;
     float x, y, w, h;
@@ -1023,22 +1028,22 @@ static void adjust_ext_s3d_layer(omap_hwc_device_t *hwc_dev,
     }
 }
 
-static int clone_s3d_external_layer(omap_hwc_device_t *hwc_dev, int ix_s3d)
+static int dock_s3d_overlay(omap_hwc_device_t *hwc_dev, int ix_s3d)
 {
     struct dsscomp_setup_dispc_data *dsscomp = &hwc_dev->comp_data.dsscomp_data;
     int r;
 
     /* S3D layers are forced into docking layers. If the display layout and
      * the layer layout don't match, we have to use 2 overlay pipelines */
-    r = clone_external_layer(hwc_dev, ix_s3d);
+    r = dock_overlay(hwc_dev, ix_s3d);
     if (r) {
-        ALOGE("Failed to clone s3d layer (%d)", r);
+        ALOGE("Failed to clone s3d overlay (%d)", r);
         return r;
     }
 
-    r = clone_layer(hwc_dev, ix_s3d);
+    r = clone_overlay(hwc_dev, ix_s3d);
     if (r) {
-        ALOGE("Failed to clone s3d layer (%d)", r);
+        ALOGE("Failed to clone s3d overlay (%d)", r);
         return r;
     }
 
@@ -1047,8 +1052,8 @@ static int clone_s3d_external_layer(omap_hwc_device_t *hwc_dev, int ix_s3d)
         return -EINVAL;
     }
 
-    adjust_ext_s3d_layer(hwc_dev, &dsscomp->ovls[dsscomp->num_ovls - 1], true);
-    adjust_ext_s3d_layer(hwc_dev, &dsscomp->ovls[dsscomp->num_ovls - 2], false);
+    adjust_overlay_to_s3d_ext_display(hwc_dev, true, &dsscomp->ovls[dsscomp->num_ovls - 1]);
+    adjust_overlay_to_s3d_ext_display(hwc_dev, false, &dsscomp->ovls[dsscomp->num_ovls - 2]);
 
     return 0;
 }
@@ -1347,7 +1352,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
             hwc_dev->buffers[dsscomp->num_ovls] = layer->handle;
             //ALOGI("dss buffers[%d] = %p", dsscomp->num_ovls, hwc_dev->buffers[dsscomp->num_ovls]);
 
-            setup_layer(hwc_dev, &dsscomp->ovls[dsscomp->num_ovls], layer, z);
+            adjust_overlay_to_layer(hwc_dev, &dsscomp->ovls[dsscomp->num_ovls], layer, z);
 
             dsscomp->ovls[dsscomp->num_ovls].cfg.ix = dsscomp->num_ovls + hwc_dev->primary_transform;
             dsscomp->ovls[dsscomp->num_ovls].addressing = OMAP_DSS_BUFADDR_LAYER_IX;
@@ -1366,7 +1371,8 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
             /* remember largest dockable layer */
             if (is_dockable_layer(layer) &&
                 (ix_docking < 0 ||
-                 display_area(&dsscomp->ovls[dsscomp->num_ovls]) > display_area(&dsscomp->ovls[ix_docking])))
+                 get_overlay_display_area(&dsscomp->ovls[dsscomp->num_ovls]) >
+                 get_overlay_display_area(&dsscomp->ovls[ix_docking])))
                 ix_docking = dsscomp->num_ovls;
 #ifdef OMAP_ENHANCEMENT_S3D
             /* remember the ix for s3d layer */
@@ -1424,11 +1430,12 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
         if (hwc_dev->use_sgx) {
             hwc_dev->buffers[0] = NULL;
         }
-        setup_layer_base(&dsscomp->ovls[0].cfg, fb_z,
-                         hwc_dev->fb_dev->base.format,
-                         1,   /* FB is always premultiplied */
-                         hwc_dev->fb_dev->base.width,
-                         hwc_dev->fb_dev->base.height);
+        setup_overlay(fb_z,
+                      hwc_dev->fb_dev->base.format,
+                      1,   /* FB is always premultiplied */
+                      hwc_dev->fb_dev->base.width,
+                      hwc_dev->fb_dev->base.height,
+                      &dsscomp->ovls[0]);
         dsscomp->ovls[0].cfg.pre_mult_alpha = 1;
         dsscomp->ovls[0].addressing = OMAP_DSS_BUFADDR_LAYER_IX;
         dsscomp->ovls[0].ba = 0;
@@ -1443,7 +1450,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
               (hwc_dev->ext_ovls_wanted && hwc_dev->ext_ovls >= hwc_dev->ext_ovls_wanted))) {
 #ifdef OMAP_ENHANCEMENT_S3D
         if (ext->current.docking && ix_s3d >= 0) {
-            if (clone_s3d_external_layer(hwc_dev, ix_s3d) == 0) {
+            if (dock_s3d_overlay(hwc_dev, ix_s3d) == 0) {
                 dsscomp->ovls[dsscomp->num_ovls - 2].cfg.zorder = z++;
                 dsscomp->ovls[dsscomp->num_ovls - 1].cfg.zorder = z++;
                 /* For now, show only the left view of an S3D layer
@@ -1464,16 +1471,16 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
 #else
         if (ext->current.docking && ix_docking >= 0) {
 #endif
-            if (clone_external_layer(hwc_dev, ix_docking) == 0)
+            if (dock_overlay(hwc_dev, ix_docking) == 0)
                 dsscomp->ovls[dsscomp->num_ovls - 1].cfg.zorder = z++;
         } else if (ext->current.docking && ix_docking < 0 && ext->force_dock) {
             ix_docking = dsscomp->num_ovls;
             struct dss2_ovl_info *oi = &dsscomp->ovls[ix_docking];
             image_info_t *dock_image = get_dock_image();
-            setup_layer_base(&oi->cfg, 0, HAL_PIXEL_FORMAT_BGRA_8888, 1,
-                             dock_image->width, dock_image->height);
+            setup_overlay(0, HAL_PIXEL_FORMAT_BGRA_8888, 1,
+                          dock_image->width, dock_image->height, oi);
             oi->cfg.stride = dock_image->rowbytes;
-            if (clone_external_layer(hwc_dev, ix_docking) == 0) {
+            if (dock_overlay(hwc_dev, ix_docking) == 0) {
                 oi->addressing = OMAP_DSS_BUFADDR_FB;
                 oi->ba = 0;
                 z++;
@@ -1487,7 +1494,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
 
             /* mirror all layers */
             for (ix = 0; res == 0 && ix < hwc_dev->post2_layers; ix++) {
-                if (clone_layer(hwc_dev, ix))
+                if (clone_overlay(hwc_dev, ix))
                     break;
                 z++;
             }
@@ -1498,7 +1505,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     if (hwc_dev->primary_transform)
         for (i = 0; i < dsscomp->num_ovls; i++) {
             if(dsscomp->ovls[i].cfg.mgr_ix == 0)
-                adjust_primary_display_layer(hwc_dev, &dsscomp->ovls[i]);
+                adjust_overlay_to_primary_display(hwc_dev, &dsscomp->ovls[i]);
         }
 
 #ifdef OMAP_ENHANCEMENT_S3D
