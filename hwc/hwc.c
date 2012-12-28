@@ -2313,12 +2313,15 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
         if (ext->mirror.rotation && (limits.fbmem_type != DSSCOMP_FBMEM_TILER2D))
             allocate_tiler2d_buffers(hwc_dev);
 
+        add_external_display(hwc_dev);
     } else {
         ext->last_mode = 0;
         if (ext->mirror.rotation && (limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
             /* free tiler 2D buffer on detach */
             free_tiler2d_buffers(hwc_dev);
         }
+
+        remove_external_display(hwc_dev);
     }
     ALOGI("external display changed (state=%d, mirror={%s tform=%ddeg%s}, dock={%s tform=%ddeg%s%s}, tv=%d", state,
          ext->mirror.enabled ? "enabled" : "disabled",
