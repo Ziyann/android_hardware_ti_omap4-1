@@ -61,12 +61,20 @@ typedef struct external_display external_display_t;
 typedef struct omap_hwc_device omap_hwc_device_t;
 
 int init_primary_display(omap_hwc_device_t *hwc_dev);
+void reset_primary_display(omap_hwc_device_t *hwc_dev);
+
 int add_external_display(omap_hwc_device_t *hwc_dev);
 void remove_external_display(omap_hwc_device_t *hwc_dev);
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev);
+
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs);
 int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t config, const uint32_t *attributes, int32_t *values);
+
 bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp);
+
+int blank_display(omap_hwc_device_t *hwc_dev, int disp);
+int unblank_display(omap_hwc_device_t *hwc_dev, int disp);
+
 void free_displays(omap_hwc_device_t *hwc_dev);
 
 #endif
