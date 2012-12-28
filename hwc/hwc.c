@@ -45,15 +45,7 @@
 #include "display.h"
 #include "dock_image.h"
 #include "sw_vsync.h"
-
-#define min(a, b) ( { typeof(a) __a = (a), __b = (b); __a < __b ? __a : __b; } )
-#define max(a, b) ( { typeof(a) __a = (a), __b = (b); __a > __b ? __a : __b; } )
-#define swap(a, b) do { typeof(a) __a = (a); (a) = (b); (b) = __a; } while (0)
-
-#define WIDTH(rect) ((rect).right - (rect).left)
-#define HEIGHT(rect) ((rect).bottom - (rect).top)
-
-#define DIV_ROUND_UP(a, b) (((a) + (b) - 1) / (b))
+#include "utils.h"
 
 #define MAX_HWC_LAYERS 32
 #define MAX_HW_OVERLAYS 4
@@ -297,7 +289,7 @@ static bool scaled(hwc_layer_1_t *layer)
     int h = HEIGHT(layer->sourceCrop);
 
     if (layer->transform & HWC_TRANSFORM_ROT_90)
-        swap(w, h);
+        SWAP(w, h);
 
     bool res = WIDTH(layer->displayFrame) != w || HEIGHT(layer->displayFrame) != h;
 #ifdef OMAP_ENHANCEMENT_S3D
@@ -388,7 +380,7 @@ static bool is_upscaled_NV12(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer)
     int h = HEIGHT(layer->sourceCrop);
 
     if (layer->transform & HWC_TRANSFORM_ROT_90)
-        swap(w, h);
+        SWAP(w, h);
 
     return (WIDTH(layer->displayFrame) >= w * hwc_dev->upscaled_nv12_limit ||
             HEIGHT(layer->displayFrame) >= h * hwc_dev->upscaled_nv12_limit);
@@ -504,45 +496,6 @@ static void setup_layer(omap_hwc_device_t *hwc_dev __unused, struct dss2_ovl_inf
     oc->crop.h = HEIGHT(layer->sourceCrop);
 }
 
-const float m_unit[2][3] = { { 1., 0., 0. }, { 0., 1., 0. } };
-
-static inline void m_translate(float m[2][3], float dx, float dy)
-{
-    m[0][2] += dx;
-    m[1][2] += dy;
-}
-
-static inline void m_scale1(float m[3], int from, int to)
-{
-    m[0] = m[0] * to / from;
-    m[1] = m[1] * to / from;
-    m[2] = m[2] * to / from;
-}
-
-static inline void m_scale(float m[2][3], int x_from, int x_to, int y_from, int y_to)
-{
-    m_scale1(m[0], x_from, x_to);
-    m_scale1(m[1], y_from, y_to);
-}
-
-static void m_rotate(float m[2][3], int quarter_turns)
-{
-    if (quarter_turns & 2)
-        m_scale(m, 1, -1, 1, -1);
-    if (quarter_turns & 1) {
-        float q;
-        q = m[0][0]; m[0][0] = -m[1][0]; m[1][0] = q;
-        q = m[0][1]; m[0][1] = -m[1][1]; m[1][1] = q;
-        q = m[0][2]; m[0][2] = -m[1][2]; m[1][2] = q;
-    }
-}
-
-static inline int m_round(float x)
-{
-    /* int truncates towards 0 */
-    return (int) (x < 0 ? x - 0.5 : x + 0.5);
-}
-
 /*
  * assuming xpy (xratio:yratio) original pixel ratio, calculate the adjusted width
  * and height for a screen of xres/yres and physical size of width/height.
@@ -584,14 +537,14 @@ static void set_ext_matrix(omap_hwc_ext_t *ext, struct hwc_rect region)
     /* reorientation matrix is:
        m = (center-from-target-center) * (scale-to-target) * (mirror) * (rotate) * (center-to-original-center) */
 
-    memcpy(ext->m, m_unit, sizeof(m_unit));
-    m_translate(ext->m, -(orig_w / 2.0f) - region.left, -(orig_h / 2.0f) - region.top);
-    m_rotate(ext->m, ext->current.rotation);
+    memcpy(ext->m, unit_matrix, sizeof(unit_matrix));
+    translate_matrix(ext->m, -(orig_w / 2.0f) - region.left, -(orig_h / 2.0f) - region.top);
+    rotate_matrix(ext->m, ext->current.rotation);
     if (ext->current.hflip)
-        m_scale(ext->m, 1, -1, 1, 1);
+        scale_matrix(ext->m, 1, -1, 1, 1);
 
     if (ext->current.rotation & 1) {
-        swap(orig_w, orig_h);
+        SWAP(orig_w, orig_h);
         xpy = 1. / xpy;
     }
 
@@ -601,8 +554,8 @@ static void set_ext_matrix(omap_hwc_ext_t *ext, struct hwc_rect region)
                        ext->xres, ext->yres, ext->width, ext->height,
                        &adj_xres, &adj_yres);
 
-    m_scale(ext->m, orig_w, adj_xres, orig_h, adj_yres);
-    m_translate(ext->m, ext->xres >> 1, ext->yres >> 1);
+    scale_matrix(ext->m, orig_w, adj_xres, orig_h, adj_yres);
+    translate_matrix(ext->m, ext->xres >> 1, ext->yres >> 1);
 }
 
 static int
@@ -678,7 +631,7 @@ crop_to_rect(struct dss2_ovl_cfg *cfg, struct hwc_rect vis_rect)
     return 0;
 }
 
-static void apply_transform(float transform[2][3],struct dss2_ovl_cfg *oc)
+static void apply_transform(transform_matrix transform, struct dss2_ovl_cfg *oc)
 {
     float x, y, w, h;
 
@@ -687,10 +640,10 @@ static void apply_transform(float transform[2][3],struct dss2_ovl_cfg *oc)
     y = transform[1][0] * oc->win.x + transform[1][1] * oc->win.y + transform[1][2];
     w = transform[0][0] * oc->win.w + transform[0][1] * oc->win.h;
     h = transform[1][0] * oc->win.w + transform[1][1] * oc->win.h;
-    oc->win.x = m_round(w > 0 ? x : x + w);
-    oc->win.y = m_round(h > 0 ? y : y + h);
-    oc->win.w = m_round(w > 0 ? w : -w);
-    oc->win.h = m_round(h > 0 ? h : -h);
+    oc->win.x = round_float(w > 0 ? x : x + w);
+    oc->win.y = round_float(h > 0 ? y : y + h);
+    oc->win.w = round_float(w > 0 ? w : -w);
+    oc->win.h = round_float(h > 0 ? h : -h);
 }
 
 static void adjust_ext_layer(omap_hwc_ext_t *ext, struct dss2_ovl_info *ovl)
@@ -781,7 +734,7 @@ static bool can_scale_layer(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer, IM
 
     /* account for 90-degree rotation */
     if (layer->transform & HWC_TRANSFORM_ROT_90)
-        swap(src_w, src_h);
+        SWAP(src_w, src_h);
 
     /* NOTE: layers should be able to be scaled externally since
        framebuffer is able to be scaled on selected external resolution */
@@ -1053,7 +1006,7 @@ static void decide_supported_cloning(omap_hwc_device_t *hwc_dev)
             hwc_dev->ext_ovls += 1;
         }
 #endif
-        num->max_hw_overlays -= max(hwc_dev->ext_ovls, hwc_dev->last_ext_ovls);
+        num->max_hw_overlays -= MAX(hwc_dev->ext_ovls, hwc_dev->last_ext_ovls);
 
         /* use mirroring transform if we are auto-switching to docking mode while mirroring*/
         if (ext->mirror.enabled) {
@@ -1083,7 +1036,7 @@ static void decide_supported_cloning(omap_hwc_device_t *hwc_dev)
      * frame while the overlays required for it are cleared.
      */
     hwc_dev->ext_ovls_wanted = hwc_dev->ext_ovls;
-    hwc_dev->ext_ovls = min(MAX_HW_OVERLAYS - hwc_dev->last_int_ovls, hwc_dev->ext_ovls);
+    hwc_dev->ext_ovls = MIN(MAX_HW_OVERLAYS - hwc_dev->last_int_ovls, hwc_dev->ext_ovls);
 
     /* if mirroring, we are limited by both internal and external overlays.  However,
        ext_ovls is always <= MAX_HW_OVERLAYS / 2 <= max_hw_overlays */
@@ -1201,7 +1154,7 @@ static int clone_external_layer(omap_hwc_device_t *hwc_dev, int ix) {
     /* full screen video after transformation */
     uint32_t xres = o->cfg.crop.w, yres = o->cfg.crop.h;
     if ((ext->current.rotation + o->cfg.rotation) & 1)
-        swap(xres, yres);
+        SWAP(xres, yres);
     float xpy = ext->lcd_xpy * o->cfg.win.w / o->cfg.win.h;
     if (o->cfg.rotation & 1)
         xpy = o->cfg.crop.h / xpy / o->cfg.crop.w;
@@ -1381,7 +1334,7 @@ static int setup_mirroring(omap_hwc_device_t *hwc_dev)
     uint32_t xres = WIDTH(ext->mirror_region);
     uint32_t yres = HEIGHT(ext->mirror_region);
     if (ext->current.rotation & 1)
-       swap(xres, yres);
+       SWAP(xres, yres);
     if (set_best_hdmi_mode(hwc_dev, xres, yres, ext->lcd_xpy))
         return -ENODEV;
     set_ext_matrix(ext, ext->mirror_region);
@@ -2113,13 +2066,13 @@ static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
     /* reorientation matrix is:
        m = (center-from-target-center) * (scale-to-target) * (mirror) * (rotate) * (center-to-original-center) */
 
-    memcpy(hwc_dev->primary_m, m_unit, sizeof(m_unit));
-    m_translate(hwc_dev->primary_m, -(orig_w >> 1), -(orig_h >> 1));
-    m_rotate(hwc_dev->primary_m, hwc_dev->primary_rotation);
+    memcpy(hwc_dev->primary_m, unit_matrix, sizeof(unit_matrix));
+    translate_matrix(hwc_dev->primary_m, -(orig_w >> 1), -(orig_h >> 1));
+    rotate_matrix(hwc_dev->primary_m, hwc_dev->primary_rotation);
     if (hwc_dev->primary_rotation & 1)
-         swap(orig_w, orig_h);
-    m_scale(hwc_dev->primary_m, orig_w, lcd_w, orig_h, lcd_h);
-    m_translate(hwc_dev->primary_m, lcd_w >> 1, lcd_h >> 1);
+         SWAP(orig_w, orig_h);
+    scale_matrix(hwc_dev->primary_m, orig_w, lcd_w, orig_h, lcd_h);
+    translate_matrix(hwc_dev->primary_m, lcd_w >> 1, lcd_h >> 1);
 }
 
 #ifdef OMAP_ENHANCEMENT_S3D
