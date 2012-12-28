@@ -20,6 +20,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <pthread.h>
+
 #include <hardware/hwcomposer.h>
 #ifdef OMAP_ENHANCEMENT_S3D
 #include <ui/S3DFormat.h>
@@ -95,22 +97,8 @@ struct omap_hwc_module {
 typedef struct omap_hwc_module omap_hwc_module_t;
 
 struct counts {
-    uint32_t possible_overlay_layers;
-    uint32_t composited_layers;
-    uint32_t scaled_layers;
-    uint32_t RGB;
-    uint32_t BGR;
-    uint32_t NV12;
-    uint32_t dockable;
-    uint32_t protected;
-    uint32_t framebuffer;
-#ifdef OMAP_ENHANCEMENT_S3D
-    uint32_t s3d;
-#endif
-
     uint32_t max_hw_overlays;
     uint32_t max_scaling_overlays;
-    uint32_t mem;
 };
 typedef struct counts counts_t;
 
@@ -172,5 +160,9 @@ struct omap_hwc_device {
 
     struct dsscomp_display_info fb_dis; /* variable-sized type; should be at end of struct */
 };
+
+bool can_scale(uint32_t src_w, uint32_t src_h, uint32_t dst_w, uint32_t dst_h, bool is_2d,
+               struct dsscomp_display_info *dis, struct dsscomp_platform_info *limits,
+               uint32_t pclk);
 
 #endif
