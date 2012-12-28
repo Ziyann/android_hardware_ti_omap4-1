@@ -20,6 +20,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "layer.h"
+
 #define MAX_DISPLAYS 3
 #define MAX_DISPLAY_CONFIGS 32
 #define EXTERNAL_DISPLAY_BACK_BUFFERS 2
@@ -59,6 +61,7 @@ struct display {
     float transform_matrix[2][3];
 
     hwc_display_contents_1_t *contents;
+    layer_statistics_t layer_stats;
 };
 typedef struct display display_t;
 

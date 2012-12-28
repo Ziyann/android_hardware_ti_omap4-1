@@ -33,6 +33,7 @@
 
 
 #include "hwc_dev.h"
+#include "layer.h"
 #include "display.h"
 #include "utils.h"
 
@@ -369,8 +370,13 @@ int set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_di
         num_displays = MAX_DISPLAYS;
 
     for (i = 0; i < num_displays; i++) {
-        if (hwc_dev->displays[i])
-            hwc_dev->displays[i]->contents = displays[i];
+        if (hwc_dev->displays[i]) {
+            display_t *display = hwc_dev->displays[i];
+            display->contents = displays[i];
+
+            gather_layer_statistics(hwc_dev, display->contents, &display->layer_stats);
+        }
+
     }
 
     for ( ; i < MAX_DISPLAYS; i++) {
