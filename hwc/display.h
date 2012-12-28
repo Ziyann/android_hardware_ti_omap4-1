@@ -47,6 +47,8 @@ struct display {
     uint32_t active_config_ix;
 
     uint32_t type;
+
+    float transform_matrix[2][3];
 };
 typedef struct display display_t;
 

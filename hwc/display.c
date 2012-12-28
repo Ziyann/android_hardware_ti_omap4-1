@@ -34,6 +34,7 @@
 
 #include "hwc_dev.h"
 #include "display.h"
+#include "utils.h"
 
 #define LCD_DISPLAY_CONFIGS 1
 #define LCD_DISPLAY_FPS 60
@@ -105,6 +106,63 @@ static int get_display_info(omap_hwc_device_t *hwc_dev, int disp, struct dsscomp
     return 0;
 }
 
+static void setup_config(display_config_t *config, int xres, int yres, struct dsscomp_display_info *info,
+                         int default_fps, int default_dpi)
+{
+    config->xres = xres;
+    config->yres = yres;
+    config->fps = default_fps;
+
+    if (info->width_in_mm && info->height_in_mm) {
+        config->xdpi = (int)(config->xres * INCH_TO_MM) / info->width_in_mm;
+        config->ydpi = (int)(config->yres * INCH_TO_MM) / info->height_in_mm;
+    } else {
+        config->xdpi = default_dpi;
+        config->ydpi = default_dpi;
+    }
+}
+
+static void setup_lcd_config(display_config_t *config, int xres, int yres, struct dsscomp_display_info *info)
+{
+    setup_config(config, xres, yres, info, LCD_DISPLAY_FPS, LCD_DISPLAY_DEFAULT_DPI);
+}
+
+static void setup_hdmi_config(display_config_t *config, int xres, int yres, struct dsscomp_display_info *info)
+{
+    setup_config(config, xres, yres, info, HDMI_DISPLAY_FPS, HDMI_DISPLAY_DEFAULT_DPI);
+}
+
+static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
+{
+    /* Create primary display translation matrix */
+    int lcd_w = hwc_dev->fb_dis.timings.x_res;
+    int lcd_h = hwc_dev->fb_dis.timings.y_res;
+    int orig_w = hwc_dev->fb_dev->base.width;
+    int orig_h = hwc_dev->fb_dev->base.height;
+    hwc_rect_t region = {.left = 0, .top = 0, .right = orig_w, .bottom = orig_h};
+
+    hwc_dev->primary_region = region;
+    hwc_dev->primary_rotation = ((lcd_w > lcd_h) ^ (orig_w > orig_h)) ? 1 : 0;
+    hwc_dev->primary_transform = ((lcd_w != orig_w)||(lcd_h != orig_h)) ? 1 : 0;
+
+    ALOGI("Transforming FB (%dx%d) => (%dx%d) rot%d", orig_w, orig_h, lcd_w, lcd_h, hwc_dev->primary_rotation);
+
+    /* Reorientation matrix is:
+       m = (center-from-target-center) * (scale-to-target) * (mirror) * (rotate) * (center-to-original-center) */
+
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+
+    memcpy(display->transform_matrix, unit_matrix, sizeof(unit_matrix));
+    translate_matrix(display->transform_matrix, -(orig_w >> 1), -(orig_h >> 1));
+    rotate_matrix(display->transform_matrix, hwc_dev->primary_rotation);
+
+    if (hwc_dev->primary_rotation & 1)
+         SWAP(orig_w, orig_h);
+
+    scale_matrix(display->transform_matrix, orig_w, lcd_w, orig_h, lcd_h);
+    translate_matrix(display->transform_matrix, lcd_w >> 1, lcd_h >> 1);
+}
+
 static int free_tiler2d_buffers(external_display_t *display)
 {
     int i;
@@ -163,29 +221,45 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
     uint32_t disp_type = (hwc_dev->fb_dis.channel == OMAP_DSS_CHANNEL_DIGIT) ? DISP_TYPE_HDMI : DISP_TYPE_LCD;
     uint32_t max_configs = (disp_type == DISP_TYPE_HDMI) ? HDMI_DISPLAY_CONFIGS : LCD_DISPLAY_CONFIGS;
 
-    if (disp_type == DISP_TYPE_HDMI)
-        ALOGI("Primary display is HDMI");
+    if (!hwc_dev->displays[HWC_DISPLAY_PRIMARY]) {
+        if (disp_type == DISP_TYPE_HDMI)
+            ALOGI("Primary display is HDMI");
 
-    err = allocate_display(sizeof(display_t), max_configs, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
-    if (err)
-        return err;
+        err = allocate_display(sizeof(display_t), max_configs, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
+        if (err)
+            return err;
+
+        hwc_dev->displays[HWC_DISPLAY_PRIMARY]->type = disp_type;
+    }
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
     display_config_t *config = &display->configs[0];
+    int xres = hwc_dev->fb_dev->base.width;
+    int yres = hwc_dev->fb_dev->base.height;
 
-    config->xres = hwc_dev->fb_dis.timings.x_res;
-    config->yres = hwc_dev->fb_dis.timings.y_res;
-    config->fps = (disp_type == DISP_TYPE_HDMI) ? HDMI_DISPLAY_FPS : LCD_DISPLAY_FPS;
+    if (disp_type == DISP_TYPE_HDMI) {
+        if (hwc_dev->ext.hdmi_state) {
+            // TODO: Verify that HDMI supports xres x yres
+            // TODO: Set HDMI resolution
+        }
 
-    if (hwc_dev->fb_dis.width_in_mm && hwc_dev->fb_dis.height_in_mm) {
-        config->xdpi = (int)(config->xres * INCH_TO_MM) / hwc_dev->fb_dis.width_in_mm;
-        config->ydpi = (int)(config->yres * INCH_TO_MM) / hwc_dev->fb_dis.height_in_mm;
+        /* Even if HDMI display is not connected we have to setup active config for primary display because
+         * SF expects primary to be always available.
+         */
+        setup_hdmi_config(config, xres, yres, &hwc_dev->fb_dis);
     } else {
-        config->xdpi = (disp_type == DISP_TYPE_HDMI) ? HDMI_DISPLAY_DEFAULT_DPI : LCD_DISPLAY_DEFAULT_DPI;
-        config->ydpi = (disp_type == DISP_TYPE_HDMI) ? HDMI_DISPLAY_DEFAULT_DPI : LCD_DISPLAY_DEFAULT_DPI;
+        setup_lcd_config(config, xres, yres, &hwc_dev->fb_dis);
     }
 
-    display->type = disp_type;
+    set_primary_display_transform_matrix(hwc_dev);
+
+    if (disp_type == DISP_TYPE_HDMI && hwc_dev->ext.hdmi_state) {
+        unblank_display(hwc_dev, HWC_DISPLAY_PRIMARY);
+
+        /* Hot-plug on primary display is not supported, but to ensure screen update we call invalidate() */
+        if (hwc_dev->procs && hwc_dev->procs->invalidate)
+            hwc_dev->procs->invalidate(hwc_dev->procs);
+    }
 
     return 0;
 }
@@ -226,18 +300,13 @@ int add_external_display(omap_hwc_device_t *hwc_dev)
     external_display_t *display = (external_display_t *)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
     display_config_t *config = &display->base.configs[0];
     omap_hwc_ext_t *ext = &hwc_dev->ext;
+    int xres = WIDTH(ext->mirror_region);
+    int yres = HEIGHT(ext->mirror_region);
 
-    config->xres = ext->mirror_region.right - ext->mirror_region.left;
-    config->yres = ext->mirror_region.bottom - ext->mirror_region.top;
-    config->fps = HDMI_DISPLAY_FPS;
+    // TODO: Verify that HDMI supports xres x yres
+    // TODO: Set HDMI resolution? What if we need to do docking of 1080p i.s.o. Presentation?
 
-    if (info.width_in_mm && info.height_in_mm) {
-        config->xdpi = (int)(config->xres * INCH_TO_MM) / info.width_in_mm;
-        config->ydpi = (int)(config->yres * INCH_TO_MM) / info.height_in_mm;
-    } else {
-        config->xdpi = HDMI_DISPLAY_DEFAULT_DPI;
-        config->ydpi = HDMI_DISPLAY_DEFAULT_DPI;
-    }
+    setup_hdmi_config(config, xres, yres, &info);
 
     if (info.channel == OMAP_DSS_CHANNEL_DIGIT) {
         display->base.type = DISP_TYPE_HDMI;

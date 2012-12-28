@@ -675,7 +675,9 @@ static void adjust_primary_display_layer(omap_hwc_device_t *hwc_dev, struct dss2
         return;
     }
 
-    apply_transform(hwc_dev->primary_m, oc);
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+
+    apply_transform(display->transform_matrix, oc);
 
     /* combining transformations: F^a*R^b*F^i*R^j = F^(a+b)*R^(j+b*(-1)^i), because F*R = R^(-1)*F */
     oc->rotation += (oc->mirror ? -1 : 1) * hwc_dev->primary_rotation;
@@ -2043,38 +2045,6 @@ err_out:
     return err;
 }
 
-static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
-{
-    /* create primary display translation matrix */
-    hwc_dev->fb_dis.ix = 0;/*Default display*/
-
-    int ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_QUERY_DISPLAY, &hwc_dev->fb_dis);
-    if (ret)
-        ALOGE("failed to get display info (%d): %m", errno);
-
-    int lcd_w = hwc_dev->fb_dis.timings.x_res;
-    int lcd_h = hwc_dev->fb_dis.timings.y_res;
-    int orig_w = hwc_dev->fb_dev->base.width;
-    int orig_h = hwc_dev->fb_dev->base.height;
-    hwc_rect_t region = {.left = 0, .top = 0, .right = orig_w, .bottom = orig_h};
-    hwc_dev->primary_region = region;
-    hwc_dev->primary_rotation = ((lcd_w > lcd_h) ^ (orig_w > orig_h)) ? 1 : 0;
-    hwc_dev->primary_transform = ((lcd_w != orig_w)||(lcd_h != orig_h)) ? 1 : 0;
-
-    ALOGI("transforming FB (%dx%d) => (%dx%d) rot%d", orig_w, orig_h, lcd_w, lcd_h, hwc_dev->primary_rotation);
-
-    /* reorientation matrix is:
-       m = (center-from-target-center) * (scale-to-target) * (mirror) * (rotate) * (center-to-original-center) */
-
-    memcpy(hwc_dev->primary_m, unit_matrix, sizeof(unit_matrix));
-    translate_matrix(hwc_dev->primary_m, -(orig_w >> 1), -(orig_h >> 1));
-    rotate_matrix(hwc_dev->primary_m, hwc_dev->primary_rotation);
-    if (hwc_dev->primary_rotation & 1)
-         SWAP(orig_w, orig_h);
-    scale_matrix(hwc_dev->primary_m, orig_w, lcd_w, orig_h, lcd_h);
-    translate_matrix(hwc_dev->primary_m, lcd_w >> 1, lcd_h >> 1);
-}
-
 #ifdef OMAP_ENHANCEMENT_S3D
 static void handle_s3d_hotplug(omap_hwc_ext_t *ext, bool state)
 {
@@ -2121,13 +2091,8 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
             if (set_best_hdmi_mode(hwc_dev, xres, yres, ext->lcd_xpy)) {
                 ALOGE("Failed to set HDMI mode");
             }
-            set_primary_display_transform_matrix(hwc_dev);
 
-            unblank_display(hwc_dev, HWC_DISPLAY_PRIMARY);
-
-            if (hwc_dev->procs && hwc_dev->procs->invalidate) {
-                hwc_dev->procs->invalidate(hwc_dev->procs);
-            }
+            init_primary_display(hwc_dev);
         } else
             ext->last_mode = 0;
 
@@ -2496,8 +2461,6 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
             goto done;
         }
     }
-
-    set_primary_display_transform_matrix(hwc_dev);
 
     if (pipe(hwc_dev->pipe_fds) == -1) {
             ALOGE("failed to event pipe (%d): %m", errno);
