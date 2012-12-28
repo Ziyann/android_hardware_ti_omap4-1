@@ -39,7 +39,6 @@
 #include <ui/S3DFormat.h>
 #endif
 
-#include <linux/fb.h>
 #include <linux/omapfb.h>
 
 #include "hwc_dev.h"
@@ -1885,34 +1884,6 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     return 0;
 }
 
-static void reset_screen(omap_hwc_device_t *hwc_dev)
-{
-    static int first_set = 1;
-    int ret;
-
-    if (first_set) {
-        first_set = 0;
-        struct dsscomp_setup_dispc_data d = {
-            .num_mgrs = 1,
-        };
-        /* remove bootloader image from the screen as blank/unblank does not change the composition */
-        ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_SETUP_DISPC, &d);
-        if (ret)
-            ALOGW("failed to remove bootloader image");
-
-        /* blank and unblank fd to make sure display is properly programmed on boot.
-         * This is needed because the bootloader can not be trusted.
-         */
-        ret = ioctl(hwc_dev->fb_fd, FBIOBLANK, FB_BLANK_POWERDOWN);
-        if (ret)
-            ALOGW("failed to blank display");
-
-        ret = ioctl(hwc_dev->fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
-        if (ret)
-            ALOGW("failed to blank display");
-    }
-}
-
 static int hwc_set(struct hwc_composer_device_1 *dev,
         size_t numDisplays, hwc_display_contents_1_t** displays)
 {
@@ -1934,7 +1905,11 @@ static int hwc_set(struct hwc_composer_device_1 *dev,
 
     pthread_mutex_lock(&hwc_dev->lock);
 
-    reset_screen(hwc_dev);
+    static bool first_set = true;
+    if (first_set) {
+        reset_primary_display(hwc_dev);
+        first_set = false;
+    }
 
     invalidate = hwc_dev->ext_ovls_wanted && (hwc_dev->ext_ovls < hwc_dev->ext_ovls_wanted) &&
                                               (hwc_dev->counts.protected || !hwc_dev->ext_ovls);
@@ -2195,7 +2170,7 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
             }
             set_primary_display_transform_matrix(hwc_dev);
 
-            ioctl(hwc_dev->fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
+            unblank_display(hwc_dev, HWC_DISPLAY_PRIMARY);
 
             if (hwc_dev->procs && hwc_dev->procs->invalidate) {
                 hwc_dev->procs->invalidate(hwc_dev->procs);
@@ -2246,7 +2221,7 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
             ext->mirror_mode = 0;
             if (setup_mirroring(hwc_dev) == 0) {
                 ext->mirror_mode = ext->last_mode;
-                ioctl(hwc_dev->hdmi_fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
+                unblank_display(hwc_dev, HWC_DISPLAY_EXTERNAL);
             } else
                 ext->mirror.enabled = 0;
         }

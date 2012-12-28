@@ -22,6 +22,7 @@
 
 #include <cutils/log.h>
 
+#include <linux/fb.h>
 #include <video/dsscomp.h>
 #ifdef USE_TI_LIBION
 #include <ion_ti/ion.h>
@@ -189,6 +190,25 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
     return 0;
 }
 
+void reset_primary_display(omap_hwc_device_t *hwc_dev)
+{
+    int ret;
+
+    /* Remove bootloader image from the screen as blank/unblank does not change the composition */
+    struct dsscomp_setup_dispc_data d = {
+        .num_mgrs = 1,
+    };
+    ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_SETUP_DISPC, &d);
+    if (ret)
+        ALOGW("failed to remove bootloader image");
+
+    /* Blank and unblank fd to make sure display is properly programmed on boot.
+     * This is needed because the bootloader can not be trusted.
+     */
+    blank_display(hwc_dev, HWC_DISPLAY_PRIMARY);
+    unblank_display(hwc_dev, HWC_DISPLAY_PRIMARY);
+}
+
 int add_external_display(omap_hwc_device_t *hwc_dev)
 {
     int err;
@@ -348,6 +368,56 @@ bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
         return false;
 
     return hwc_dev->displays[disp]->type == DISP_TYPE_HDMI;
+}
+
+int blank_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
+        return -EINVAL;
+
+    int err = 0;
+
+    switch (disp) {
+    case HWC_DISPLAY_PRIMARY:
+        err = ioctl(hwc_dev->fb_fd, FBIOBLANK, FB_BLANK_POWERDOWN);
+        break;
+    case HWC_DISPLAY_EXTERNAL:
+        err = ioctl(hwc_dev->hdmi_fb_fd, FBIOBLANK, FB_BLANK_POWERDOWN);
+        break;
+    default:
+        err = -EINVAL;
+        break;
+    }
+
+    if (err)
+        ALOGW("Failed to blank display %d (%d)", disp, err);
+
+    return err;
+}
+
+int unblank_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
+        return -EINVAL;
+
+    int err = 0;
+
+    switch (disp) {
+    case HWC_DISPLAY_PRIMARY:
+        err = ioctl(hwc_dev->fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
+        break;
+    case HWC_DISPLAY_EXTERNAL:
+        err = ioctl(hwc_dev->hdmi_fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
+        break;
+    default:
+        err = -EINVAL;
+        break;
+    }
+
+    if (err)
+        ALOGW("Failed to unblank display %d (%d)", disp, err);
+
+    return err;
 }
 
 void free_displays(omap_hwc_device_t *hwc_dev)
