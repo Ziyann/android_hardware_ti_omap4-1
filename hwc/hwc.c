@@ -42,6 +42,7 @@
 #include <linux/omapfb.h>
 
 #include "hwc_dev.h"
+#include "color_fmt.h"
 #include "display.h"
 #include "dock_image.h"
 #include "sw_vsync.h"
@@ -65,20 +66,6 @@ enum {
     EXT_ROTATION    = 3,        /* rotation while mirroring */
     EXT_HFLIP       = (1 << 2), /* flip l-r on output (after rotation) */
 };
-
-#define HAL_FMT(f) ((f) == HAL_PIXEL_FORMAT_TI_NV12 ? "NV12" : \
-                    (f) == HAL_PIXEL_FORMAT_TI_NV12_1D ? "NV12" : \
-                    (f) == HAL_PIXEL_FORMAT_YV12 ? "YV12" : \
-                    (f) == HAL_PIXEL_FORMAT_BGRX_8888 ? "xRGB32" : \
-                    (f) == HAL_PIXEL_FORMAT_RGBX_8888 ? "xBGR32" : \
-                    (f) == HAL_PIXEL_FORMAT_BGRA_8888 ? "ARGB32" : \
-                    (f) == HAL_PIXEL_FORMAT_RGBA_8888 ? "ABGR32" : \
-                    (f) == HAL_PIXEL_FORMAT_RGB_565 ? "RGB565" : "??")
-
-#define DSS_FMT(f) ((f) == OMAP_DSS_COLOR_NV12 ? "NV12" : \
-                    (f) == OMAP_DSS_COLOR_RGB24U ? "xRGB32" : \
-                    (f) == OMAP_DSS_COLOR_ARGB32 ? "ARGB32" : \
-                    (f) == OMAP_DSS_COLOR_RGB16 ? "RGB565" : "??")
 
 //#define DUMP_LAYERS
 //#define DUMP_DSSCOMPS
@@ -255,22 +242,6 @@ static void dump_set_info(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t* 
 
 static int sync_id = 0;
 
-static bool is_valid_format(uint32_t format)
-{
-    switch(format) {
-    case HAL_PIXEL_FORMAT_RGB_565:
-    case HAL_PIXEL_FORMAT_RGBX_8888:
-    case HAL_PIXEL_FORMAT_RGBA_8888:
-    case HAL_PIXEL_FORMAT_BGRA_8888:
-    case HAL_PIXEL_FORMAT_BGRX_8888:
-    case HAL_PIXEL_FORMAT_TI_NV12:
-    case HAL_PIXEL_FORMAT_TI_NV12_1D:
-        return true;
-
-    default:
-        return false;
-    }
-}
 #ifdef OMAP_ENHANCEMENT_S3D
 static uint32_t get_s3d_layout_type(hwc_layer_1_t *layer)
 {
@@ -311,60 +282,17 @@ static bool is_protected(hwc_layer_1_t *layer)
 
 static bool is_RGB(IMG_native_handle_t *handle)
 {
-    switch(handle->iFormat)
-    {
-    case HAL_PIXEL_FORMAT_BGRA_8888:
-    case HAL_PIXEL_FORMAT_BGRX_8888:
-    case HAL_PIXEL_FORMAT_RGB_565:
-        return true;
-    default:
-        return false;
-    }
-}
-static uint32_t get_format_bpp(uint32_t format)
-{
-    switch(format) {
-    case HAL_PIXEL_FORMAT_BGRA_8888:
-    case HAL_PIXEL_FORMAT_BGRX_8888:
-    case HAL_PIXEL_FORMAT_RGBX_8888:
-    case HAL_PIXEL_FORMAT_RGBA_8888:
-        return 32;
-    case HAL_PIXEL_FORMAT_RGB_565:
-        return 16;
-    case HAL_PIXEL_FORMAT_TI_NV12:
-    case HAL_PIXEL_FORMAT_TI_NV12_1D:
-        return 8;
-    default:
-        return 0;
-    }
-}
-
-static bool is_BGR_format(uint32_t format)
-{
-    switch (format) {
-    case HAL_PIXEL_FORMAT_RGBX_8888:
-    case HAL_PIXEL_FORMAT_RGBA_8888:
-        return true;
-    default:
-        return false;
-    }
+    return is_rgb_format(handle->iFormat);
 }
 
 static bool is_BGR(IMG_native_handle_t *handle)
 {
-    return is_BGR_format(handle->iFormat);
+    return is_bgr_format(handle->iFormat);
 }
 
 static bool is_NV12(IMG_native_handle_t *handle)
 {
-    switch(handle->iFormat)
-    {
-    case HAL_PIXEL_FORMAT_TI_NV12:
-    case HAL_PIXEL_FORMAT_TI_NV12_1D:
-        return true;
-    default:
-        return false;
-    }
+    return is_nv12_format(handle->iFormat);
 }
 
 static bool is_upscaled_NV12(omap_hwc_device_t *hwc_dev, hwc_layer_1_t *layer)
@@ -412,33 +340,10 @@ static void setup_layer_base(struct dss2_ovl_cfg *oc, int index, uint32_t format
     };
 
     /* convert color format */
-    switch (format) {
-    case HAL_PIXEL_FORMAT_RGBA_8888:
-    case HAL_PIXEL_FORMAT_BGRA_8888:
-        oc->color_mode = OMAP_DSS_COLOR_ARGB32;
-        if (blended)
-                break;
+    oc->color_mode = convert_hal_to_dss_format(format, blended);
 
-    case HAL_PIXEL_FORMAT_RGBX_8888:
-    case HAL_PIXEL_FORMAT_BGRX_8888:
-        oc->color_mode = OMAP_DSS_COLOR_RGB24U;
-        break;
-
-    case HAL_PIXEL_FORMAT_RGB_565:
-        oc->color_mode = OMAP_DSS_COLOR_RGB16;
-        break;
-
-    case HAL_PIXEL_FORMAT_TI_NV12:
-    case HAL_PIXEL_FORMAT_TI_NV12_1D:
-        oc->color_mode = OMAP_DSS_COLOR_NV12;
+    if (oc->color_mode == OMAP_DSS_COLOR_NV12)
         oc->cconv = ctbl_bt601_5;
-        break;
-
-    default:
-        /* Should have been filtered out */
-        ALOGV("Unsupported pixel format");
-        return;
-    }
 
     oc->width = width;
     oc->height = height;
@@ -1554,7 +1459,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     } else {
         /* Use SGX for composition plus first 3 layers that are DSS renderable */
         hwc_dev->use_sgx = 1;
-        hwc_dev->swap_rb = is_BGR_format(hwc_dev->fb_dev->base.format);
+        hwc_dev->swap_rb = is_bgr_format(hwc_dev->fb_dev->base.format);
     }
 
     /* setup pipes */
