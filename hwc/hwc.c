@@ -474,6 +474,9 @@ static void transform_overlay(transform_matrix transform, struct dss2_ovl_info *
     h = transform[1][0] * oc->win.w + transform[1][1] * oc->win.h;
     oc->win.x = round_float(w > 0 ? x : x + w);
     oc->win.y = round_float(h > 0 ? y : y + h);
+    /* compensate position rounding error by adjusting layer size */
+    w += w > 0 ? x - oc->win.x : oc->win.x - (x + w);
+    h += h > 0 ? y - oc->win.y : oc->win.y - (y + h);
     oc->win.w = round_float(w > 0 ? w : -w);
     oc->win.h = round_float(h > 0 ? h : -h);
 }
