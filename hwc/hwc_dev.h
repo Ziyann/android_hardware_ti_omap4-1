@@ -28,19 +28,8 @@
 #include <video/omap_hwc.h>
 
 #include "hal_public.h"
-#include "rgz_2d.h"
+#include "blitter.h"
 #include "display.h"
-
-enum bltpolicy {
-    BLTPOLICY_DISABLED = 0,
-    BLTPOLICY_DEFAULT = 1,    /* Default blit policy */
-    BLTPOLICY_ALL,            /* Test mode to attempt to blit all */
-};
-
-enum bltmode {
-    BLTMODE_PAINT = 0,    /* Attempt to blit layer by layer */
-    BLTMODE_REGION = 1,   /* Attempt to blit layers via regions */
-};
 
 struct omap_hwc_module {
     hwc_module_t base;
@@ -80,8 +69,7 @@ struct omap_hwc_device {
     int last_ext_ovls;           /* # of overlays on external/internal display for last composition */
     int last_int_ovls;
 
-    enum bltmode blt_mode;
-    enum bltpolicy blt_policy;
+    blitter_config_t blitter;
 
     display_t *displays[MAX_DISPLAYS];
 
