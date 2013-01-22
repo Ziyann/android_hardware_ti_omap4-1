@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "blitter.h"
 #include "layer.h"
 
 #define MAX_DISPLAYS 3
@@ -67,17 +68,19 @@ enum disp_role {
 
 struct composition {
     buffer_handle_t *buffers;
+
     bool use_sgx;
     bool swap_rb;
-    uint32_t post2_layers;       /* buffers used with DSS pipes*/
-    uint32_t post2_blit_buffers; /* buffers used with blit */
+
+    uint32_t post2_layers;       /* # of buffers used with DSS pipes */
     uint32_t wanted_ovls;        /* # of overlays required for current composition */
     uint32_t avail_ovls;         /* # of overlays available for current composition */
     uint32_t scaling_ovls;       /* # of overlays available with scaling caps */
-    uint32_t blit_flags;
-    int blit_num;
-    /* This is a kernel data structure
-     *comp_data and blit_ops should be defined in consecutive memory
+
+    blitter_composition_t blitter;
+
+    /* This is a kernel data structure. comp_data and blit_ops should be defined
+     * in consecutive memory.
      */
     struct omap_hwc_data comp_data;
     struct rgz_blt_entry blit_ops[RGZ_MAX_BLITS];

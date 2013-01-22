@@ -66,12 +66,6 @@ enum {
 
 static bool debug = false;
 static bool debugpost2 = false;
-static bool debugblt = false;
-static rgz_t grgz;
-#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
-static rgz_ext_layer_list_t grgz_ext_layer_list;
-#endif
-static struct bvsurfgeom gscrngeom;
 
 static void showfps(void)
 {
@@ -186,7 +180,7 @@ static void dump_set_info(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *
             dump_printf(&log, " ");
         hwc_layer_1_t *layer = &list->hwLayers[i];
         IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
-        if (comp->post2_blit_buffers) {
+        if (comp->blitter.num_buffers) {
             if ((i + 1) < comp->post2_layers)
                 dump_printf(&log, "%p:%s,", handle, "DSS");
             else
@@ -224,10 +218,10 @@ static void dump_set_info(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *
             dump_printf(&log, " ");
         dump_printf(&log, "%p", comp->buffers[i]);
     }
-    if (comp->post2_blit_buffers) {
+    if (comp->blitter.num_buffers) {
         dump_printf(&log, "} B{");
         for (i = comp->post2_layers;
-             i < comp->post2_blit_buffers + comp->post2_layers; i++) {
+             i < comp->blitter.num_buffers + comp->post2_layers; i++) {
             dump_printf(&log, "%p ", comp->buffers[i]);
         }
     }
@@ -908,148 +902,6 @@ static void check_sync_fds_for_display(int disp, hwc_display_contents_1_t *list)
     }
 }
 
-static void blit_reset(omap_hwc_device_t *hwc_dev)
-{
-    composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
-    primary_comp->blit_flags = 0;
-    primary_comp->blit_num = 0;
-    primary_comp->post2_blit_buffers = 0;
-    primary_comp->comp_data.blit_data.rgz_items = 0;
-}
-
-static bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *list, int bufoff)
-{
-    /* Currently blitter is supported only for single display scenarios */
-    if (!list || is_external_display_mirroring(hwc_dev))
-        goto err_out;
-
-    int rgz_in_op;
-    int rgz_out_op;
-
-    switch (hwc_dev->blt_mode) {
-        case BLTMODE_PAINT:
-            rgz_in_op = RGZ_IN_HWCCHK;
-            rgz_out_op = RGZ_OUT_BVCMD_PAINT;
-            break;
-        case BLTMODE_REGION:
-        default:
-            rgz_in_op = RGZ_IN_HWC;
-            rgz_out_op = RGZ_OUT_BVCMD_REGION;
-            break;
-    }
-
-    size_t num_layers = list->numHwLayers;
-    if (hwc_dev->base.common.version > HWC_DEVICE_API_VERSION_1_0) {
-        /* Ignore HWC_FRAMEBUFFER_TARGET layer at the end of the list */
-        num_layers -= 1;
-    }
-
-#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
-    /*
-     * Request the layer identities to SurfaceFlinger, first figure out if the
-     * operation is supported
-     */
-    if (!(list->flags & HWC_EXTENDED_API) || !hwc_dev->procs ||
-        hwc_dev->procs->extension_cb(hwc_dev->procs, HWC_EXTENDED_OP_LAYERDATA, NULL, -1) != 0)
-        goto err_out;
-
-    /* Check if we have enough space in the extended layer list */
-    if ((sizeof(hwc_layer_extended_t) * num_layers) > sizeof(grgz_ext_layer_list))
-        goto err_out;
-#endif
-    uint32_t i;
-#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
-    for (i = 0; i < num_layers; i++) {
-        hwc_layer_extended_t *ext_layer = &grgz_ext_layer_list.layers[i];
-        ext_layer->idx = i;
-        if (hwc_dev->procs->extension_cb(hwc_dev->procs, HWC_EXTENDED_OP_LAYERDATA,
-            (void **) &ext_layer, sizeof(hwc_layer_extended_t)) != 0)
-            goto err_out;
-    }
-#endif
-
-    rgz_in_params_t in = {
-        .op = rgz_in_op,
-        .data = {
-            .hwc = {
-                .dstgeom = &gscrngeom,
-                .layers = list->hwLayers,
-#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
-                .extlayers = grgz_ext_layer_list.layers,
-#endif
-                .layerno = num_layers
-            }
-        }
-    };
-
-    /*
-     * This means if all the layers marked for the FRAMEBUFFER cannot be
-     * blitted, do not blit, for e.g. SKIP layers
-     */
-    if (rgz_in(&in, &grgz) != RGZ_ALL)
-        goto err_out;
-
-    uint32_t count = 0;
-    for (i = 0; i < num_layers; i++) {
-        if (list->hwLayers[i].compositionType != HWC_OVERLAY) {
-            count++;
-        }
-    }
-
-    rgz_out_params_t out = {
-        .op = rgz_out_op,
-        .data = {
-            .bvc = {
-                .dstgeom = &gscrngeom,
-                .noblend = 0,
-            }
-        }
-    };
-
-    if (rgz_out(&grgz, &out) != 0) {
-        ALOGE("Failed generating blits");
-        goto err_out;
-    }
-
-    /* This is a special situation where the regionizer decided no blits are
-     * needed for this frame but there are blit buffers to synchronize with. Can
-     * happen only if the regionizer is enabled otherwise it's likely a bug
-     */
-    if (rgz_out_op != RGZ_OUT_BVCMD_REGION && out.data.bvc.out_blits == 0 && out.data.bvc.out_nhndls > 0) {
-        ALOGE("Regionizer invalid output blit_num %d, post2_blit_buffers %d", out.data.bvc.out_blits, out.data.bvc.out_nhndls);
-        goto err_out;
-    }
-
-    composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
-    primary_comp->blit_flags |= HWC_BLT_FLAG_USE_FB;
-    primary_comp->blit_num = out.data.bvc.out_blits;
-    primary_comp->post2_blit_buffers = out.data.bvc.out_nhndls;
-    for (i = 0; i < primary_comp->post2_blit_buffers; i++) {
-        //ALOGI("blit buffers[%d] = %p", bufoff, out.data.bvc.out_hndls[i]);
-        primary_comp->buffers[bufoff++] = out.data.bvc.out_hndls[i];
-    }
-
-    struct rgz_blt_entry *res_blit_ops = (struct rgz_blt_entry *) out.data.bvc.cmdp;
-    memcpy(primary_comp->comp_data.blit_data.rgz_blts, res_blit_ops, sizeof(*res_blit_ops) * out.data.bvc.cmdlen);
-    ALOGI_IF(debugblt, "blt struct sz %d", sizeof(*res_blit_ops) * out.data.bvc.cmdlen);
-    ALOGE_IF(primary_comp->blit_num != out.data.bvc.cmdlen,"blit_num != out.data.bvc.cmdlen, %d != %d", primary_comp->blit_num, out.data.bvc.cmdlen);
-
-    /* all layers will be rendered without SGX help either via DSS or blitter */
-    for (i = 0; i < num_layers; i++) {
-        if (list->hwLayers[i].compositionType != HWC_OVERLAY) {
-            list->hwLayers[i].compositionType = HWC_OVERLAY;
-            //ALOGI("blitting layer %d", i);
-            list->hwLayers[i].hints &= ~HWC_HINT_TRIPLE_BUFFER;
-        }
-        list->hwLayers[i].hints &= ~HWC_HINT_CLEAR_FB;
-    }
-    return true;
-
-err_out:
-    rgz_release(&grgz);
-    return false;
-}
-
 void debug_post2(omap_hwc_device_t *hwc_dev, int nbufs, int disp)
 {
     if (!debugpost2)
@@ -1077,6 +929,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     composition_t *comp = &hwc_dev->displays[disp]->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
     layer_statistics_t *layer_stats = &hwc_dev->displays[disp]->layer_stats;
+    blitter_config_t *blitter = &hwc_dev->blitter;
 
     if (get_display_mode(hwc_dev, disp) == DISP_MODE_LEGACY) {
         /* mirror the layers from primary display composition */
@@ -1133,7 +986,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
      */
     bool needs_fb = comp->use_sgx;
 
-    if ((hwc_dev->blt_policy == BLTPOLICY_ALL) && (disp == HWC_DISPLAY_PRIMARY)) {
+    if ((blitter->policy == BLT_POLICY_ALL) && (disp == HWC_DISPLAY_PRIMARY)) {
         /* Check if we can blit everything */
         blit_all = blit_layers(hwc_dev, list, 0);
         if (blit_all) {
@@ -1235,7 +1088,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     if (scaled_gfx && disp == HWC_DISPLAY_PRIMARY)
         dsscomp->ovls[0].cfg.ix = ovl_ix;
 
-    if ((hwc_dev->blt_policy == BLTPOLICY_DEFAULT) && (disp == HWC_DISPLAY_PRIMARY)) {
+    if ((blitter->policy == BLT_POLICY_DEFAULT) && (disp == HWC_DISPLAY_PRIMARY)) {
         /*
          * As long as we keep blitting on consecutive frames keep the regionizer
          * state, if this is not possible the regionizer state is unreliable and
@@ -1246,7 +1099,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
                 comp->use_sgx = 0;
             }
         } else
-            rgz_release(&grgz);
+            release_blitter();
     }
 
     /* If the SGX is not used and there is blit data we need a framebuffer and
@@ -1255,7 +1108,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     if (needs_fb) {
         /* assign a z-layer for fb */
         if (fb_z < 0) {
-            if ((!hwc_dev->blt_policy) != BLTPOLICY_DISABLED && layer_stats->count)
+            if ((!blitter->policy) != BLT_POLICY_DISABLED && layer_stats->count)
                 ALOGE("**** should have assigned z-layer for fb");
             fb_z = z++;
         }
@@ -1379,7 +1232,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     }
 
     reserve_overlays_for_displays(hwc_dev);
-    blit_reset(hwc_dev);
+    reset_blitter(hwc_dev);
 
     uint32_t i;
     for (i = 0; i < numDisplays; i++) {
@@ -1402,6 +1255,7 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
     layer_statistics_t *layer_stats = &hwc_dev->displays[disp]->layer_stats;
     composition_t *comp = &hwc_dev->displays[disp]->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    blitter_config_t *blitter = &hwc_dev->blitter;
 
     int err = 0;
     bool invalidate = false;
@@ -1460,19 +1314,21 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
         if (hwc_dev->force_sgx > 0)
             hwc_dev->force_sgx--;
 
-        comp->comp_data.blit_data.rgz_flags = comp->blit_flags;
-        comp->comp_data.blit_data.rgz_items = comp->blit_num;
+        comp->comp_data.blit_data.rgz_flags = comp->blitter.flags;
+        comp->comp_data.blit_data.rgz_items = comp->blitter.num_blits;
         int omaplfb_comp_data_sz = sizeof(comp->comp_data) +
             (comp->comp_data.blit_data.rgz_items * sizeof(struct rgz_blt_entry));
 
+
         uint32_t nbufs = comp->post2_layers;
-        if (comp->post2_blit_buffers) {
+        if (comp->blitter.num_buffers) {
             /*
              * We don't want to pass a NULL entry in the Post2, but we need to
              * fix up buffer handle array and overlay indexes to account for
              * this
              */
-            nbufs += comp->post2_blit_buffers - 1;
+            nbufs += comp->blitter.num_buffers - 1;
+
             if (comp->post2_layers > 1) {
                 uint32_t i, j;
                 for (i = 0; i < nbufs; i++) {
@@ -1483,9 +1339,9 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
                 }
             }
         }
-        ALOGI_IF(debugblt && hwc_dev->blt_policy != BLTPOLICY_DISABLED,
+        ALOGI_IF(blitter->debug,
             "Post2, blits %d, ovl_buffers %d, blit_buffers %d sgx %d",
-            comp->blit_num, comp->post2_layers, comp->post2_blit_buffers,
+            comp->blitter.num_blits, comp->post2_layers, comp->blitter.num_buffers,
             comp->use_sgx);
 
         debug_post2(hwc_dev, nbufs, disp);
@@ -1557,11 +1413,13 @@ static void hwc_dump(struct hwc_composer_device_1 *dev, char *buff, int buff_len
                           cfg->ix, cfg->zorder);
     }
 
-    if (hwc_dev->blt_policy != BLTPOLICY_DISABLED) {
+    blitter_config_t *blitter = &hwc_dev->blitter;
+
+    if (blitter->policy != BLT_POLICY_DISABLED) {
         dump_printf(&log, "  bltpolicy: %s, bltmode: %s\n",
-            hwc_dev->blt_policy == BLTPOLICY_DEFAULT ? "default" :
-                hwc_dev->blt_policy == BLTPOLICY_ALL ? "all" : "unknown",
-                    hwc_dev->blt_mode == BLTMODE_PAINT ? "paint" : "regionize");
+            blitter->policy == BLT_POLICY_DEFAULT ? "default" :
+                blitter->policy == BLT_POLICY_ALL ? "all" : "unknown",
+                    blitter->mode == BLT_MODE_PAINT ? "paint" : "regionize");
     }
     dump_printf(&log, "\n");
 }
@@ -2040,24 +1898,9 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
     ALOGI("open_device(rgb_order=%d nv12_only=%d)",
         hwc_dev->flags_rgb_order, hwc_dev->flags_nv12_only);
 
-    int gc2d_fd = open("/dev/gcioctl", O_RDWR);
-    if (gc2d_fd < 0) {
-        ALOGI("Unable to open gc-core device (%d), blits disabled", errno);
-        hwc_dev->blt_policy = BLTPOLICY_DISABLED;
-    } else {
-        property_get("persist.hwc.bltmode", value, "1");
-        hwc_dev->blt_mode = atoi(value);
-        property_get("persist.hwc.bltpolicy", value, "1");
-        hwc_dev->blt_policy = atoi(value);
-        ALOGI("blitter present, blits mode %d, blits policy %d", hwc_dev->blt_mode, hwc_dev->blt_policy);
-        close(gc2d_fd);
-
-        if (rgz_get_screengeometry(hwc_dev->fb_fd, &gscrngeom,
-                hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.format) != 0) {
-            err = -EINVAL;
-            goto done;
-        }
-    }
+    err = init_blitter(hwc_dev);
+    if (err)
+        goto done;
 
     property_get("persist.hwc.upscaled_nv12_limit", value, "2.");
     sscanf(value, "%f", &hwc_dev->upscaled_nv12_limit);
