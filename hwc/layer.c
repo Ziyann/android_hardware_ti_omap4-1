@@ -70,10 +70,6 @@ bool is_scaled_layer(const hwc_layer_1_t *layer)
         SWAP(w, h);
 
     bool res = WIDTH(layer->displayFrame) != w || HEIGHT(layer->displayFrame) != h;
-#ifdef OMAP_ENHANCEMENT_S3D
-    /* An S3D layer also needs scaling due to subsampling */
-    res = res || (get_s3d_layout_type(layer) != eMono);
-#endif
 
     return res;
 }
@@ -167,9 +163,6 @@ void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_
     /* Figure out how many layers we can support via DSS */
     for (i = 0; list && i < list->numHwLayers; i++) {
         hwc_layer_1_t *layer = &list->hwLayers[i];
-#ifdef OMAP_ENHANCEMENT_S3D
-        uint32_t s3d_layout_type = get_s3d_layout_type(layer);
-#endif
 
         if (layer->compositionType == HWC_FRAMEBUFFER_TARGET) {
             layer_stats->framebuffer++;
@@ -179,23 +172,6 @@ void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_
         }
 
         if (is_valid_layer(hwc_dev, layer)) {
-#ifdef OMAP_ENHANCEMENT_S3D
-            if (s3d_layout_type != eMono) {
-                /* For now we can only handle 1 S3D layer, skip any additional ones */
-                if (layer_stats->s3d > 0 || !hwc_dev->ext.dock.enabled || !hwc_dev->ext.s3d_capable) {
-                    layer->flags |= HWC_SKIP_LAYER;
-                    continue;
-                } else if (layer_stats->s3d == 0) {
-                    /* For now, S3D layer is made a dockable layer to trigger docking logic. */
-                    if (!is_dockable(layer)) {
-                        layer_stats->dockable++;
-                    }
-                    layer_stats->s3d++;
-                    hwc_dev->s3d_input_type = s3d_layout_type;
-                    hwc_dev->s3d_input_order = get_s3d_layout_order(layer);
-                }
-            }
-#endif
             layer_stats->composable++;
 
             /* NV12 layers can only be rendered on scaling overlays */

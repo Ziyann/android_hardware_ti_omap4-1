@@ -23,10 +23,6 @@
 #include <pthread.h>
 
 #include <hardware/hwcomposer.h>
-#ifdef OMAP_ENHANCEMENT_S3D
-#include <ui/S3DFormat.h>
-#endif
-
 #include <linux/bltsville.h>
 #include <video/dsscomp.h>
 #include <video/omap_hwc.h>
@@ -39,7 +35,6 @@ struct ext_transform {
     uint8_t rotation : 3;          /* 90-degree clockwise rotations */
     uint8_t hflip    : 1;          /* flip l-r (after rotation) */
     uint8_t enabled  : 1;          /* cloning enabled */
-    uint8_t docking  : 1;          /* docking vs. mirroring - used for state */
 };
 typedef struct ext_transform ext_transform_t;
 
@@ -47,10 +42,8 @@ typedef struct ext_transform ext_transform_t;
 struct omap_hwc_ext {
     /* support */
     ext_transform_t mirror;             /* mirroring settings */
-    ext_transform_t dock;               /* docking settings */
     float lcd_xpy;                      /* pixel ratio for UI */
     bool avoid_mode_change;             /* use HDMI mode used for mirroring if possible */
-    bool force_dock;                    /* must dock */
 
     /* state */
     bool hdmi_state;                    /* whether HDMI is connected */
@@ -69,12 +62,6 @@ struct omap_hwc_ext {
     uint32_t yres;
     float m[2][3];                      /* external transformation matrix */
     hwc_rect_t mirror_region;           /* region of screen to mirror */
-#ifdef OMAP_ENHANCEMENT_S3D
-    bool s3d_enabled;
-    bool s3d_capable;
-    enum S3DLayoutType s3d_type;
-    enum S3DLayoutOrder s3d_order;
-#endif
 };
 typedef struct omap_hwc_ext omap_hwc_ext_t;
 
@@ -140,10 +127,7 @@ struct omap_hwc_device {
     int ext_ovls_wanted;         /* # of overlays that should be on external display for current composition */
     int last_ext_ovls;           /* # of overlays on external/internal display for last composition */
     int last_int_ovls;
-#ifdef OMAP_ENHANCEMENT_S3D
-    enum S3DLayoutType s3d_input_type;
-    enum S3DLayoutOrder s3d_input_order;
-#endif
+
     enum bltmode blt_mode;
     enum bltpolicy blt_policy;
 
