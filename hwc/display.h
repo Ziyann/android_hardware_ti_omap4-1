@@ -68,14 +68,15 @@ enum disp_role {
 
 struct composition {
     buffer_handle_t *buffers;
+    uint32_t num_buffers;        /* # of buffers used in composition */
 
     bool use_sgx;
     bool swap_rb;
 
-    uint32_t post2_layers;       /* # of buffers used with DSS pipes */
     uint32_t wanted_ovls;        /* # of overlays required for current composition */
     uint32_t avail_ovls;         /* # of overlays available for current composition */
     uint32_t scaling_ovls;       /* # of overlays available with scaling caps */
+    uint32_t used_ovls;          /* # of overlays used in composition */
 
     blitter_composition_t blitter;
 
