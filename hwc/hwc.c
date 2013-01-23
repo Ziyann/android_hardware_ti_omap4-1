@@ -180,14 +180,10 @@ static void dump_set_info(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *
             dump_printf(&log, " ");
         hwc_layer_1_t *layer = &list->hwLayers[i];
         IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
-        if (comp->blitter.num_buffers) {
-            if ((i + 1) < comp->post2_layers)
-                dump_printf(&log, "%p:%s,", handle, "DSS");
-            else
-                dump_printf(&log, "%p:%s,", handle, "BV2D");
-        }
-        else
-            dump_printf(&log, "%p:%s,", handle, layer->compositionType == HWC_OVERLAY ? "DSS" : "SGX");
+        const char *hw = "SGX";
+        if (layer->compositionType == HWC_OVERLAY)
+            hw = layer->hints & HWC_HINT_TRIPLE_BUFFER ? "DSS" : "BV2D";
+        dump_printf(&log, "%p:%s,", handle, hw);
         if ((layer->flags & HWC_SKIP_LAYER) || !handle) {
             dump_printf(&log, "SKIP");
             continue;
@@ -213,16 +209,17 @@ static void dump_set_info(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *
             dump_printf(&log, "-");
     }
     dump_printf(&log, "} L{");
-    for (i = 0; i < comp->post2_layers; i++) {
+    for (i = 0; i < comp->num_buffers; i++) {
         if (i)
             dump_printf(&log, " ");
         dump_printf(&log, "%p", comp->buffers[i]);
     }
     if (comp->blitter.num_buffers) {
         dump_printf(&log, "} B{");
-        for (i = comp->post2_layers;
-             i < comp->blitter.num_buffers + comp->post2_layers; i++) {
-            dump_printf(&log, "%p ", comp->buffers[i]);
+        for (i = 0; i < comp->blitter.num_buffers; i++) {
+            if (i)
+                dump_printf(&log, " ");
+            dump_printf(&log, "%p", comp->buffers[comp->num_buffers + i]);
         }
     }
     dump_printf(&log, "}%s\n", comp->use_sgx ? " swap" : "");
@@ -815,7 +812,7 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix)
 {
     composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &primary_comp->comp_data.dsscomp_data;
-    int ext_ovl_ix = dsscomp->num_ovls - primary_comp->post2_layers;
+    int ext_ovl_ix = dsscomp->num_ovls - primary_comp->used_ovls;
     struct dss2_ovl_info *o = &dsscomp->ovls[dsscomp->num_ovls];
 
     if (dsscomp->num_ovls >= MAX_HW_OVERLAYS) {
@@ -846,7 +843,7 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix)
     }
 
     /* use distinct z values (to simplify z-order checking) */
-    o->cfg.zorder += primary_comp->post2_layers;
+    o->cfg.zorder += primary_comp->used_ovls;
 
     adjust_overlay_to_display(hwc_dev, HWC_DISPLAY_EXTERNAL, o);
     dsscomp->num_ovls++;
@@ -870,6 +867,41 @@ static int setup_mirroring(omap_hwc_device_t *hwc_dev)
 
     set_ext_matrix(hwc_dev, ext->transform.region);
     return 0;
+}
+
+static void setup_framebuffer(omap_hwc_device_t *hwc_dev, int disp, int ovl_ix, int zorder)
+{
+    composition_t *comp = &hwc_dev->displays[disp]->composition;
+    struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    struct dss2_ovl_info *fb_ovl = &dsscomp->ovls[0];
+    uint32_t i;
+
+    setup_overlay(zorder,
+                  hwc_dev->fb_dev[disp]->base.format,
+                  true,   /* FB is always premultiplied */
+                  hwc_dev->fb_dev[disp]->base.width,
+                  hwc_dev->fb_dev[disp]->base.height,
+                  fb_ovl);
+
+    fb_ovl->cfg.mgr_ix = disp;
+    fb_ovl->cfg.ix = ovl_ix;
+    fb_ovl->cfg.pre_mult_alpha = 1;
+    fb_ovl->addressing = OMAP_DSS_BUFADDR_LAYER_IX;
+
+    if (comp->use_sgx) {
+        /* Add an empty buffer list entry for SGX FB */
+        fb_ovl->ba = comp->num_buffers;
+        comp->buffers[comp->num_buffers] = NULL;
+        comp->num_buffers++;
+    } else {
+        /*
+         * Blitter FB will be inserted in OMAPLFB at position 0. All buffer references in
+         * dss2_ovl_info have to be updated to accommodate for that.
+         */
+        fb_ovl->ba = 0;
+        for (i = 1; i < dsscomp->num_ovls; i++)
+            dsscomp->ovls[i].ba += 1;
+    }
 }
 
 /*
@@ -938,7 +970,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         uint32_t i, ix;
 
         /* mirror all layers */
-        for (ix = 0; ix < primary_comp->post2_layers; ix++) {
+        for (ix = 0; ix < primary_comp->used_ovls; ix++) {
             if (clone_overlay(hwc_dev, ix))
                 break;
         }
@@ -954,22 +986,38 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         dsscomp_primary->mgrs[1] = dsscomp_primary->mgrs[0];
         dsscomp_primary->mgrs[1].ix = 1;
         dsscomp_primary->num_mgrs++;
-        hwc_dev->last_ext_ovls = primary_comp->post2_layers;
+        hwc_dev->last_ext_ovls = primary_comp->used_ovls;
         return 0;
     }
 
     memset(dsscomp, 0x0, sizeof(*dsscomp));
     dsscomp->sync_id = sync_id++;
 
-    /* phase 3 logic */
-    if (can_dss_render_all_for_display(hwc_dev, disp)) {
-        /* All layers can be handled by the DSS -- don't use SGX for composition */
-        comp->use_sgx = 0;
-        comp->swap_rb = layer_stats->bgr != 0;
-    } else {
-        /* Use SGX for composition plus first 3 layers that are DSS renderable */
-        comp->use_sgx = 1;
-        comp->swap_rb = is_bgr_format(hwc_dev->fb_dev[disp]->base.format);
+    /*
+     * The following priorities are used for different compositing HW:
+     * 1 - BLITTER (policy = ALL)
+     * 2 - DSSCOMP
+     * 3 - BLITTER (policy = DEFAULT)
+     * 4 - SGX
+     */
+
+    /* Check if we can blit everything */
+    bool blit_all = (blitter->policy == BLT_POLICY_ALL) && (disp == HWC_DISPLAY_PRIMARY) &&
+            blit_layers(hwc_dev, list, 0);
+
+    if (blit_all) {
+        comp->use_sgx = false;
+        comp->swap_rb = false;
+    } else  {
+        if (can_dss_render_all_for_display(hwc_dev, disp)) {
+            /* All layers can be handled by the DSS -- don't use SGX for composition */
+            comp->use_sgx = false;
+            comp->swap_rb = layer_stats->bgr != 0;
+        } else {
+            /* Use SGX for composition plus first 3 layers that are DSS renderable */
+            comp->use_sgx = true;
+            comp->swap_rb = is_bgr_format(hwc_dev->fb_dev[disp]->base.format);
+        }
     }
 
     if (is_hdmi_display(hwc_dev, disp))
@@ -979,28 +1027,13 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     int z = 0;
     int fb_z = -1;
     bool scaled_gfx = false;
-    bool blit_all = false;
 
-    /* If the SGX is used or we are going to blit something we need a framebuffer
-     * and a DSS pipe
-     */
-    bool needs_fb = comp->use_sgx;
+    /* If the SGX is used or we are going to blit something we need a framebuffer and a DSS pipe */
+    bool needs_fb = comp->use_sgx || blit_all;
 
-    if ((blitter->policy == BLT_POLICY_ALL) && (disp == HWC_DISPLAY_PRIMARY)) {
-        /* Check if we can blit everything */
-        blit_all = blit_layers(hwc_dev, list, 0);
-        if (blit_all) {
-            needs_fb = 1;
-            comp->use_sgx = 0;
-            /* No need to swap red and blue channels */
-            comp->swap_rb = 0;
-        }
-    }
-
-    /* If a framebuffer is needed, begin using VID1 for DSS overlay layers,
-     * we need GFX for FB
-     */
-    dsscomp->num_ovls = needs_fb ? 1 /*VID1*/ : 0 /*GFX*/;
+    /* If a framebuffer is needed, begin using VID1 for DSS overlay layers, we need GFX for FB */
+    dsscomp->num_ovls = needs_fb ? OMAP_DSS_VIDEO1 : OMAP_DSS_GFX;
+    comp->num_buffers = 0;
 
     /* set up if DSS layers */
     uint32_t mem_used = 0;
@@ -1045,15 +1078,15 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
             if (comp->use_sgx && !is_blended_layer(layer))
                 layer->hints |= HWC_HINT_CLEAR_FB;
 
-            comp->buffers[dsscomp->num_ovls] = layer->handle;
-            //ALOGI("dss buffers[%d] = %p", dsscomp->num_ovls, comp->buffers[dsscomp->num_ovls]);
+            comp->buffers[comp->num_buffers] = layer->handle;
+            //ALOGI("dss buffers[%d] = %p", comp->num_buffers, comp->buffers[comp->num_buffers]);
 
             adjust_overlay_to_layer(hwc_dev, &dsscomp->ovls[dsscomp->num_ovls], layer, z);
 
             dsscomp->ovls[dsscomp->num_ovls].cfg.ix = ovl_ix;
             dsscomp->ovls[dsscomp->num_ovls].cfg.mgr_ix = disp;
             dsscomp->ovls[dsscomp->num_ovls].addressing = OMAP_DSS_BUFADDR_LAYER_IX;
-            dsscomp->ovls[dsscomp->num_ovls].ba = dsscomp->num_ovls;
+            dsscomp->ovls[dsscomp->num_ovls].ba = comp->num_buffers;
 
             if (disp == HWC_DISPLAY_PRIMARY) {
                 /* ensure GFX layer is never scaled */
@@ -1069,6 +1102,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
             }
 
             dsscomp->num_ovls++;
+            comp->num_buffers++;
             ovl_ix++;
             z++;
         } else if (comp->use_sgx) {
@@ -1095,7 +1129,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
          * we need to reset its state.
          */
         if (comp->use_sgx) {
-            if (blit_layers(hwc_dev, list, dsscomp->num_ovls == 1 ? 0 : dsscomp->num_ovls)) {
+            if (blit_layers(hwc_dev, list, comp->num_buffers)) {
                 comp->use_sgx = 0;
             }
         } else
@@ -1112,32 +1146,15 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
                 ALOGE("**** should have assigned z-layer for fb");
             fb_z = z++;
         }
-        /*
-         * This is needed because if we blit all we would lose the handle of
-         * the first layer
-         */
-        if (comp->use_sgx) {
-            comp->buffers[0] = NULL;
-        }
-        setup_overlay(fb_z,
-                    hwc_dev->fb_dev[disp]->base.format,
-                    1,   /* FB is always premultiplied */
-                    hwc_dev->fb_dev[disp]->base.width,
-                    hwc_dev->fb_dev[disp]->base.height,
-                    &dsscomp->ovls[0]);
 
-        dsscomp->ovls[0].cfg.pre_mult_alpha = 1;
-        dsscomp->ovls[0].addressing = OMAP_DSS_BUFADDR_LAYER_IX;
-        dsscomp->ovls[0].ba = 0;
-        dsscomp->ovls[0].cfg.ix = ovl_offset;
-        dsscomp->ovls[0].cfg.mgr_ix = disp;
+        setup_framebuffer(hwc_dev, disp, ovl_offset, fb_z);
     }
 
-    comp->post2_layers = dsscomp->num_ovls;
+    comp->used_ovls = dsscomp->num_ovls;
     if (disp == HWC_DISPLAY_PRIMARY)
-        hwc_dev->last_int_ovls = comp->post2_layers;
+        hwc_dev->last_int_ovls = comp->used_ovls;
     else if (disp == HWC_DISPLAY_EXTERNAL)
-        hwc_dev->last_ext_ovls = comp->post2_layers;
+        hwc_dev->last_ext_ovls = comp->used_ovls;
 
     /* Apply transform for display */
     if (hwc_dev->displays[disp]->transform.scaling)
@@ -1295,7 +1312,9 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
                          * is updated by SurfaceFlinger after prepare() call, so FB slot has to be updated
                          * in set().
                          */
-                        comp->buffers[0] = list->hwLayers[list->numHwLayers - 1].handle;
+                        uint32_t list_fb_ix = list->numHwLayers - 1;
+                        uint32_t comp_fb_ix = dsscomp->ovls[0].ba;
+                        comp->buffers[comp_fb_ix] = list->hwLayers[list_fb_ix].handle;
                     } else {
                         ALOGE("No buffer is provided for GL composition");
                         err = -EFAULT;
@@ -1319,35 +1338,14 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
         int omaplfb_comp_data_sz = sizeof(comp->comp_data) +
             (comp->comp_data.blit_data.rgz_items * sizeof(struct rgz_blt_entry));
 
+        uint32_t num_buffers = comp->num_buffers + comp->blitter.num_buffers;
 
-        uint32_t nbufs = comp->post2_layers;
-        if (comp->blitter.num_buffers) {
-            /*
-             * We don't want to pass a NULL entry in the Post2, but we need to
-             * fix up buffer handle array and overlay indexes to account for
-             * this
-             */
-            nbufs += comp->blitter.num_buffers - 1;
+        ALOGI_IF(blitter->debug, "Post2, blits %d, ovl_buffers %d, blit_buffers %d sgx %d",
+            comp->blitter.num_blits, comp->num_buffers, comp->blitter.num_buffers, comp->use_sgx);
 
-            if (comp->post2_layers > 1) {
-                uint32_t i, j;
-                for (i = 0; i < nbufs; i++) {
-                    comp->buffers[i] = comp->buffers[i+1];
-                }
-                for (i = 1, j = 1; j < comp->post2_layers; i++, j++) {
-                    dsscomp->ovls[j].ba = i;
-                }
-            }
-        }
-        ALOGI_IF(blitter->debug,
-            "Post2, blits %d, ovl_buffers %d, blit_buffers %d sgx %d",
-            comp->blitter.num_blits, comp->post2_layers, comp->blitter.num_buffers,
-            comp->use_sgx);
-
-        debug_post2(hwc_dev, nbufs, disp);
+        debug_post2(hwc_dev, num_buffers, disp);
         err = hwc_dev->fb_dev[disp]->Post2((framebuffer_device_t *)hwc_dev->fb_dev[disp],
-                             comp->buffers,
-                             nbufs,
+                             comp->buffers, num_buffers,
                              dsscomp, omaplfb_comp_data_sz);
 
         showfps();
