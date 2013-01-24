@@ -30,6 +30,15 @@ struct ion_handle;
 typedef struct hwc_display_contents_1 hwc_display_contents_1_t;
 typedef struct omap_hwc_device omap_hwc_device_t;
 
+struct display_transform {
+    uint8_t rotation : 3;          /* 90-degree clockwise rotations */
+    uint8_t hflip    : 1;          /* flip l-r (after rotation) */
+    bool scaling;
+    hwc_rect_t region;
+    float matrix[2][3];
+};
+typedef struct display_transform display_transform_t;
+
 struct display_config {
     int xres;
     int yres;
@@ -51,42 +60,103 @@ enum disp_mode {
     DISP_MODE_PRESENTATION,
 };
 
+enum disp_role {
+    DISP_ROLE_PRIMARY,
+    DISP_ROLE_EXTERNAL,
+};
+
+struct composition {
+    buffer_handle_t *buffers;
+    bool use_sgx;
+    bool swap_rb;
+    uint32_t post2_layers;       /* buffers used with DSS pipes*/
+    uint32_t post2_blit_buffers; /* buffers used with blit */
+    uint32_t wanted_ovls;        /* # of overlays required for current composition */
+    uint32_t avail_ovls;         /* # of overlays available for current composition */
+    uint32_t scaling_ovls;       /* # of overlays available with scaling caps */
+    uint32_t blit_flags;
+    int blit_num;
+    /* This is a kernel data structure
+     *comp_data and blit_ops should be defined in consecutive memory
+     */
+    struct omap_hwc_data comp_data;
+    struct rgz_blt_entry blit_ops[RGZ_MAX_BLITS];
+};
+typedef struct composition composition_t;
+
 struct display {
     uint32_t num_configs;
     display_config_t *configs;
     uint32_t active_config_ix;
 
     uint32_t type;
-
-    float transform_matrix[2][3];
+    uint32_t role;
 
     hwc_display_contents_1_t *contents;
     layer_statistics_t layer_stats;
+    composition_t composition;
+    display_transform_t transform;
 };
 typedef struct display display_t;
 
-struct external_display {
-    display_t base;
+struct primary_display {
+    //place holder for primary display specific controls
+    //could be blitter,  vsync handling etc
+    bool use_sw_vsync;
+};
+typedef struct primary_display primary_display_t;
 
+struct external_display {
+    bool is_mirroring; //mirroring or distinct mode
+};
+typedef struct external_display external_display_t;
+
+struct primary_lcd_display {
+    display_t lcd;
+    primary_display_t primary;
+};
+typedef struct primary_lcd_display primary_lcd_display_t;
+
+struct hdmi_display {
+    display_t base;
+    uint16_t width;         /* external screen dimensions */
+    uint16_t height;
+    uint32_t current_mode;
+    uint32_t last_mode;
+};
+typedef struct hdmi_display hdmi_display_t;
+
+struct primary_hdmi_display {
+    hdmi_display_t hdmi;
+    primary_display_t primary;
+};
+typedef struct primary_hdmi_display primary_hdmi_display_t;
+
+struct external_hdmi_display {
+    hdmi_display_t hdmi;
+    external_display_t ext;
+
+    /* attributes */
+    bool avoid_mode_change;        /* use HDMI mode used for mirroring if possible */
     int ion_fd;
     struct ion_handle *ion_handles[EXTERNAL_DISPLAY_BACK_BUFFERS];
 };
-typedef struct external_display external_display_t;
+typedef struct external_hdmi_display external_hdmi_display_t;
 
 int init_primary_display(omap_hwc_device_t *hwc_dev);
 void reset_primary_display(omap_hwc_device_t *hwc_dev);
 
-int add_external_display(omap_hwc_device_t *hwc_dev);
-void remove_external_display(omap_hwc_device_t *hwc_dev);
+int add_external_hdmi_display(omap_hwc_device_t *hwc_dev);
+void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev);
 
 int set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
-
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs);
 int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t config, const uint32_t *attributes, int32_t *values);
 uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp);
 
 bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp);
+bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev);
 
 int blank_display(omap_hwc_device_t *hwc_dev, int disp);
 int unblank_display(omap_hwc_device_t *hwc_dev, int disp);
