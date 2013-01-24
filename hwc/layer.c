@@ -175,7 +175,7 @@ void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_
             layer_stats->composable++;
 
             /* NV12 layers can only be rendered on scaling overlays */
-            if (is_scaled_layer(layer) || is_nv12_layer(layer) || hwc_dev->primary_transform)
+            if (is_scaled_layer(layer) || is_nv12_layer(layer) || hwc_dev->displays[HWC_DISPLAY_PRIMARY]->transform.scaling)
                 layer_stats->scaled++;
 
             if (is_bgr_layer(layer))

@@ -142,29 +142,28 @@ static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
     int orig_h = hwc_dev->fb_dev->base.height;
     hwc_rect_t region = {.left = 0, .top = 0, .right = orig_w, .bottom = orig_h};
 
-    hwc_dev->primary_region = region;
-    hwc_dev->primary_rotation = ((lcd_w > lcd_h) ^ (orig_w > orig_h)) ? 1 : 0;
-    hwc_dev->primary_transform = ((lcd_w != orig_w)||(lcd_h != orig_h)) ? 1 : 0;
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
 
-    ALOGI("Transforming FB (%dx%d) => (%dx%d) rot%d", orig_w, orig_h, lcd_w, lcd_h, hwc_dev->primary_rotation);
+    display->transform.region = region;
+    display->transform.rotation= ((lcd_w > lcd_h) ^ (orig_w > orig_h)) ? 1 : 0;
+    display->transform.scaling= ((lcd_w != orig_w)||(lcd_h != orig_h)) ? 1 : 0;
+
+    ALOGI("Transforming FB (%dx%d) => (%dx%d) rot%d", orig_w, orig_h, lcd_w, lcd_h, display->transform.rotation);
 
     /* Reorientation matrix is:
        m = (center-from-target-center) * (scale-to-target) * (mirror) * (rotate) * (center-to-original-center) */
+    memcpy(display->transform.matrix, unit_matrix, sizeof(unit_matrix));
+    translate_matrix(display->transform.matrix, -(orig_w >> 1), -(orig_h >> 1));
+    rotate_matrix(display->transform.matrix, display->transform.rotation);
 
-    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
-
-    memcpy(display->transform_matrix, unit_matrix, sizeof(unit_matrix));
-    translate_matrix(display->transform_matrix, -(orig_w >> 1), -(orig_h >> 1));
-    rotate_matrix(display->transform_matrix, hwc_dev->primary_rotation);
-
-    if (hwc_dev->primary_rotation & 1)
+    if (display->transform.rotation & 1)
          SWAP(orig_w, orig_h);
 
-    scale_matrix(display->transform_matrix, orig_w, lcd_w, orig_h, lcd_h);
-    translate_matrix(display->transform_matrix, lcd_w >> 1, lcd_h >> 1);
+    scale_matrix(display->transform.matrix, orig_w, lcd_w, orig_h, lcd_h);
+    translate_matrix(display->transform.matrix, lcd_w >> 1, lcd_h >> 1);
 }
 
-static int free_tiler2d_buffers(external_display_t *display)
+static int free_tiler2d_buffers(external_hdmi_display_t *display)
 {
     int i;
     for (i = 0 ; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
@@ -179,7 +178,7 @@ static int free_tiler2d_buffers(external_display_t *display)
     return 0;
 }
 
-static int allocate_tiler2d_buffers(omap_hwc_device_t *hwc_dev, external_display_t *display)
+static int allocate_tiler2d_buffers(omap_hwc_device_t *hwc_dev, external_hdmi_display_t *display)
 {
     int ret, i;
     size_t stride;
@@ -211,68 +210,89 @@ handle_error:
     return -ENOMEM;
 }
 
+static int init_primary_lcd_display(omap_hwc_device_t *hwc_dev)
+{
+    int err;
+    if (hwc_dev->displays[HWC_DISPLAY_PRIMARY])
+        return 0;
+
+    err = allocate_display(sizeof(primary_lcd_display_t), LCD_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
+    if (err)
+        return err;
+
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    display_config_t *config = &display->configs[0];
+    int xres = hwc_dev->fb_dev->base.width;
+    int yres = hwc_dev->fb_dev->base.height;
+    display->type = DISP_TYPE_LCD;
+    display->role = DISP_ROLE_PRIMARY;
+
+    setup_lcd_config(config, xres, yres, &hwc_dev->fb_dis);
+    set_primary_display_transform_matrix(hwc_dev);
+
+    return 0;
+}
+
+static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev)
+{
+    int err;
+    if (hwc_dev->displays[HWC_DISPLAY_PRIMARY])
+        return 0;
+
+    err = allocate_display(sizeof(primary_hdmi_display_t), HDMI_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
+    if (err)
+        return err;
+
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    display_config_t *config = &display->configs[0];
+    int xres = hwc_dev->fb_dev->base.width;
+    int yres = hwc_dev->fb_dev->base.height;
+    display->type = DISP_TYPE_HDMI;
+    display->role = DISP_ROLE_PRIMARY;
+
+    setup_hdmi_config(config, xres, yres, &hwc_dev->fb_dis);
+
+    set_primary_display_transform_matrix(hwc_dev);
+
+    return 0;
+}
+
 int init_primary_display(omap_hwc_device_t *hwc_dev)
 {
     int err;
 
     err = get_display_info(hwc_dev, HWC_DISPLAY_PRIMARY, &hwc_dev->fb_dis);
     if (err)
-        return err;
+        return -ENODEV;
 
-    uint32_t disp_type = (hwc_dev->fb_dis.channel == OMAP_DSS_CHANNEL_DIGIT) ? DISP_TYPE_HDMI : DISP_TYPE_LCD;
-    uint32_t max_configs = (disp_type == DISP_TYPE_HDMI) ? HDMI_DISPLAY_CONFIGS : LCD_DISPLAY_CONFIGS;
-
-    if (!hwc_dev->displays[HWC_DISPLAY_PRIMARY]) {
-        if (disp_type == DISP_TYPE_HDMI)
-            ALOGI("Primary display is HDMI");
-
-        err = allocate_display(sizeof(display_t), max_configs, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
-        if (err)
-            return err;
-
-        hwc_dev->displays[HWC_DISPLAY_PRIMARY]->type = disp_type;
+    switch(hwc_dev->fb_dis.channel) {
+        case OMAP_DSS_CHANNEL_LCD:
+            err = init_primary_lcd_display(hwc_dev);
+            break;
+        case OMAP_DSS_CHANNEL_DIGIT:
+            err = init_primary_hdmi_display(hwc_dev);
+            break;
+        default:
+            return -ENODEV;
     }
+    if (err)
+        return -ENODEV;
 
-    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
-    display_config_t *config = &display->configs[0];
-    int xres = hwc_dev->fb_dev->base.width;
-    int yres = hwc_dev->fb_dev->base.height;
-
-    if (disp_type == DISP_TYPE_HDMI) {
-        if (hwc_dev->ext.hdmi_state) {
-            // TODO: Verify that HDMI supports xres x yres
-            // TODO: Set HDMI resolution
-        }
-
-        /* Even if HDMI display is not connected we have to setup active config for primary display because
-         * SF expects primary to be always available.
-         */
-        setup_hdmi_config(config, xres, yres, &hwc_dev->fb_dis);
-    } else {
-        setup_lcd_config(config, xres, yres, &hwc_dev->fb_dis);
-    }
-
-    set_primary_display_transform_matrix(hwc_dev);
-
-    if (disp_type == DISP_TYPE_HDMI && hwc_dev->ext.hdmi_state) {
-        unblank_display(hwc_dev, HWC_DISPLAY_PRIMARY);
-
-        /* Hot-plug on primary display is not supported, but to ensure screen update we call invalidate() */
-        if (hwc_dev->procs && hwc_dev->procs->invalidate)
-            hwc_dev->procs->invalidate(hwc_dev->procs);
-    }
-
-    return 0;
+    return err;
 }
 
 void reset_primary_display(omap_hwc_device_t *hwc_dev)
 {
     int ret;
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    if (!display)
+        return;
 
     /* Remove bootloader image from the screen as blank/unblank does not change the composition */
     struct dsscomp_setup_dispc_data d = {
         .num_mgrs = 1,
     };
+
     ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_SETUP_DISPC, &d);
     if (ret)
         ALOGW("failed to remove bootloader image");
@@ -284,44 +304,40 @@ void reset_primary_display(omap_hwc_device_t *hwc_dev)
     unblank_display(hwc_dev, HWC_DISPLAY_PRIMARY);
 }
 
-int add_external_display(omap_hwc_device_t *hwc_dev)
+int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
 {
     int err;
-
     struct dsscomp_display_info info;
     err = get_display_info(hwc_dev, HWC_DISPLAY_EXTERNAL, &info);
     if (err)
         return err;
 
     /* Currently SF cannot handle more than 1 config */
-    err = allocate_display(sizeof(external_display_t), HDMI_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
+    err = allocate_display(sizeof(external_hdmi_display_t), HDMI_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
     if (err)
         return err;
 
-    external_display_t *display = (external_display_t *)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-    display_config_t *config = &display->base.configs[0];
-    omap_hwc_ext_t *ext = &hwc_dev->ext;
-    int xres = WIDTH(ext->mirror_region);
-    int yres = HEIGHT(ext->mirror_region);
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+    display_config_t *config = &display->configs[0];
+    display->type = DISP_TYPE_HDMI;
+    display->role = DISP_ROLE_EXTERNAL;
+
+    int xres = WIDTH(display->transform.region);
+    int yres = HEIGHT(display->transform.region);
 
     // TODO: Verify that HDMI supports xres x yres
     // TODO: Set HDMI resolution? What if we need to do docking of 1080p i.s.o. Presentation?
 
     setup_hdmi_config(config, xres, yres, &info);
 
-    if (info.channel == OMAP_DSS_CHANNEL_DIGIT) {
-        display->base.type = DISP_TYPE_HDMI;
-    } else {
-        ALOGW("Unknown type of external display is connected");
-    }
-
     /* Allocate backup buffers for FB rotation. This is required only if the FB tranform is
      * different from that of the external display and the FB is not in TILER2D space.
      */
-    if (ext->mirror.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
-        display->ion_fd = ion_open();
-        if (display->ion_fd >= 0) {
-            allocate_tiler2d_buffers(hwc_dev, display);
+    external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+    if (display->transform.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
+        ext_hdmi->ion_fd = ion_open();
+        if (ext_hdmi->ion_fd >= 0) {
+            allocate_tiler2d_buffers(hwc_dev, ext_hdmi);
         } else {
             ALOGE("Failed to open ion driver (%d)", errno);
         }
@@ -330,20 +346,19 @@ int add_external_display(omap_hwc_device_t *hwc_dev)
     return 0;
 }
 
-void remove_external_display(omap_hwc_device_t *hwc_dev)
+void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev)
 {
-    external_display_t *display = (external_display_t *)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
     if (!display)
         return;
 
-    omap_hwc_ext_t *ext = &hwc_dev->ext;
-
-    if (ext->mirror.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
+    external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+    if (display->transform.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
         /* free tiler 2D buffer on detach */
-        free_tiler2d_buffers(display);
+        free_tiler2d_buffers(ext_hdmi);
 
-        if (display->ion_fd >= 0)
-            ion_close(display->ion_fd);
+        if (ext_hdmi->ion_fd >= 0)
+            ion_close(ext_hdmi->ion_fd);
     }
 
     free_display(hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
@@ -352,12 +367,12 @@ void remove_external_display(omap_hwc_device_t *hwc_dev)
 
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev)
 {
-    external_display_t *display = (external_display_t *)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+    external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t *)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
 
-    if (display) {
-        struct dsscomp_setup_dispc_data *dsscomp = &hwc_dev->comp_data.dsscomp_data;
+    if (ext_hdmi) {
+        struct dsscomp_setup_dispc_data *dsscomp = &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]->composition.comp_data.dsscomp_data;
 
-        return display->ion_handles[dsscomp->sync_id % EXTERNAL_DISPLAY_BACK_BUFFERS];
+        return ext_hdmi->ion_handles[dsscomp->sync_id % EXTERNAL_DISPLAY_BACK_BUFFERS];
     } else {
         return NULL;
     }
@@ -518,6 +533,21 @@ bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
     return hwc_dev->displays[disp]->type == DISP_TYPE_HDMI;
 }
 
+bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev)
+{
+    if (!hwc_dev->displays[HWC_DISPLAY_EXTERNAL])
+        return false;
+
+    external_display_t *ext = NULL;
+    if (hwc_dev->displays[HWC_DISPLAY_EXTERNAL]->type == DISP_TYPE_HDMI)
+        ext = &((external_hdmi_display_t*) hwc_dev->displays[HWC_DISPLAY_EXTERNAL])->ext;
+
+    if (ext && ext->is_mirroring)
+        return true;
+
+    return false;
+}
+
 int blank_display(omap_hwc_device_t *hwc_dev, int disp)
 {
     if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
@@ -530,7 +560,8 @@ int blank_display(omap_hwc_device_t *hwc_dev, int disp)
         err = ioctl(hwc_dev->fb_fd, FBIOBLANK, FB_BLANK_POWERDOWN);
         break;
     case HWC_DISPLAY_EXTERNAL:
-        err = ioctl(hwc_dev->hdmi_fb_fd, FBIOBLANK, FB_BLANK_POWERDOWN);
+        if (is_hdmi_display(hwc_dev, disp))
+            err = ioctl(hwc_dev->hdmi_fb_fd, FBIOBLANK, FB_BLANK_POWERDOWN);
         break;
     default:
         err = -EINVAL;
@@ -555,7 +586,8 @@ int unblank_display(omap_hwc_device_t *hwc_dev, int disp)
         err = ioctl(hwc_dev->fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
         break;
     case HWC_DISPLAY_EXTERNAL:
-        err = ioctl(hwc_dev->hdmi_fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
+        if (is_hdmi_display(hwc_dev, disp))
+            err = ioctl(hwc_dev->hdmi_fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
         break;
     default:
         err = -EINVAL;
@@ -571,8 +603,10 @@ int unblank_display(omap_hwc_device_t *hwc_dev, int disp)
 void free_displays(omap_hwc_device_t *hwc_dev)
 {
     /* Make sure that we don't leak ION memory that might be allocated by external display */
-    if (hwc_dev->displays[HWC_DISPLAY_EXTERNAL])
-        remove_external_display(hwc_dev);
+    if (hwc_dev->displays[HWC_DISPLAY_EXTERNAL]) {
+        if (is_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL))
+            remove_external_hdmi_display(hwc_dev);
+    }
 
     int i;
     for (i = 0; i < MAX_DISPLAYS; i++)
