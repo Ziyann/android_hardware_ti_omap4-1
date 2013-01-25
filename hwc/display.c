@@ -145,6 +145,40 @@ static void setup_hdmi_config(display_config_t *config, int xres, int yres, stru
     setup_config(config, xres, yres, info, HDMI_DISPLAY_FPS, HDMI_DISPLAY_DEFAULT_DPI);
 }
 
+static int init_primary_lcd_display(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres)
+{
+    int err;
+
+    err = allocate_display(sizeof(primary_lcd_display_t), LCD_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
+    if (err)
+        return err;
+
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+
+    setup_lcd_config(&display->configs[0], xres, yres, &hwc_dev->fb_dis);
+
+    display->type = DISP_TYPE_LCD;
+
+    return 0;
+}
+
+static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres)
+{
+    int err;
+
+    err = allocate_display(sizeof(primary_hdmi_display_t), HDMI_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
+    if (err)
+        return err;
+
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+
+    setup_hdmi_config(&display->configs[0], xres, yres, &hwc_dev->fb_dis);
+
+    display->type = DISP_TYPE_HDMI;
+
+    return 0;
+}
+
 static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
 {
     /* Create primary display translation matrix */
@@ -224,77 +258,43 @@ handle_error:
     return -ENOMEM;
 }
 
-static int init_primary_lcd_display(omap_hwc_device_t *hwc_dev)
-{
-    int err;
-    if (hwc_dev->displays[HWC_DISPLAY_PRIMARY])
-        return 0;
-
-    err = allocate_display(sizeof(primary_lcd_display_t), LCD_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
-    if (err)
-        return err;
-
-    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
-    display_config_t *config = &display->configs[0];
-    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
-    int xres = fb_dev->base.width;
-    int yres = fb_dev->base.height;
-    display->type = DISP_TYPE_LCD;
-    display->role = DISP_ROLE_PRIMARY;
-
-    setup_lcd_config(config, xres, yres, &hwc_dev->fb_dis);
-    set_primary_display_transform_matrix(hwc_dev);
-
-    return 0;
-}
-
-static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev)
-{
-    int err;
-    if (hwc_dev->displays[HWC_DISPLAY_PRIMARY])
-        return 0;
-
-    err = allocate_display(sizeof(primary_hdmi_display_t), HDMI_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_PRIMARY]);
-    if (err)
-        return err;
-
-    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
-    display_config_t *config = &display->configs[0];
-    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
-    int xres = fb_dev->base.width;
-    int yres = fb_dev->base.height;
-    display->type = DISP_TYPE_HDMI;
-    display->role = DISP_ROLE_PRIMARY;
-
-    setup_hdmi_config(config, xres, yres, &hwc_dev->fb_dis);
-
-    set_primary_display_transform_matrix(hwc_dev);
-
-    return 0;
-}
-
 int init_primary_display(omap_hwc_device_t *hwc_dev)
 {
+    if (hwc_dev->displays[HWC_DISPLAY_PRIMARY]) {
+        ALOGE("Display %d is already connected", HWC_DISPLAY_PRIMARY);
+        return -EBUSY;
+    }
+
     int err;
 
     err = get_display_info(hwc_dev, HWC_DISPLAY_PRIMARY, &hwc_dev->fb_dis);
     if (err)
         return -ENODEV;
 
-    switch(hwc_dev->fb_dis.channel) {
+    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
+    uint32_t xres = fb_dev->base.width;
+    uint32_t yres = fb_dev->base.height;
+
+    switch (hwc_dev->fb_dis.channel) {
         case OMAP_DSS_CHANNEL_LCD:
-            err = init_primary_lcd_display(hwc_dev);
+            err = init_primary_lcd_display(hwc_dev, xres, yres);
             break;
         case OMAP_DSS_CHANNEL_DIGIT:
-            err = init_primary_hdmi_display(hwc_dev);
+            err = init_primary_hdmi_display(hwc_dev, xres, yres);
             break;
         default:
             return -ENODEV;
     }
+
     if (err)
         return -ENODEV;
 
-    return err;
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    display->role = DISP_ROLE_PRIMARY;
+
+    set_primary_display_transform_matrix(hwc_dev);
+
+    return 0;
 }
 
 void reset_primary_display(omap_hwc_device_t *hwc_dev)
@@ -322,6 +322,11 @@ void reset_primary_display(omap_hwc_device_t *hwc_dev)
 
 int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
 {
+    if (hwc_dev->displays[HWC_DISPLAY_EXTERNAL]) {
+        ALOGE("Display %d is already connected", HWC_DISPLAY_EXTERNAL);
+        return -EBUSY;
+    }
+
     int err;
     struct dsscomp_display_info info;
     err = get_display_info(hwc_dev, HWC_DISPLAY_EXTERNAL, &info);
