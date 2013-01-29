@@ -426,10 +426,6 @@ int set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_di
 
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs)
 {
-    // HACK: to enable HDMI till hotplug propagation is supported
-    if (disp != HWC_DISPLAY_PRIMARY)
-        return -EINVAL;
-
     if (!numConfigs)
         return -EINVAL;
 
@@ -519,10 +515,6 @@ uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
         return DISP_MODE_PRESENTATION;
 
     display_t *display = hwc_dev->displays[disp];
-
-    //HACK: to enable HDMI till the hotplug propagation is supported
-    //since display object is created, we can assume legacy mode
-    return DISP_MODE_LEGACY;
 
     if (!display->contents)
         return DISP_MODE_INVALID;
