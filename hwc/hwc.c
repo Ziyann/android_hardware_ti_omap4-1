@@ -697,55 +697,70 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres,
 
 static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
 {
-    layer_statistics_t *layer_stats = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->layer_stats;
-    composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
+    display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    uint32_t ovl_ix_base = OMAP_DSS_GFX;
+    uint32_t max_overlays = MAX_HW_OVERLAYS;
+    uint32_t num_nonscaling_overlays = NUM_NONSCALING_OVERLAYS;
+
+    /* If FB is not same resolution as LCD don't use GFX overlay. */
+    if (primary_display->transform.scaling) {
+        ovl_ix_base = OMAP_DSS_VIDEO1;
+        max_overlays -= num_nonscaling_overlays;
+        num_nonscaling_overlays = 0;
+    }
 
     /*
-     * We cannot atomically switch overlays from one display to another.  First, they
+     * We cannot atomically switch overlays from one display to another. First, they
      * have to be disabled, and the disabling has to take effect on the current display.
      * We keep track of the available number of overlays here.
      */
-    if (!hwc_dev->displays[HWC_DISPLAY_EXTERNAL]) {
-        primary_comp->avail_ovls = MAX_HW_OVERLAYS - hwc_dev->last_ext_ovls;
-        primary_comp->scaling_ovls = primary_comp->avail_ovls- NUM_NONSCALING_OVERLAYS;
-        primary_comp->wanted_ovls = primary_comp->avail_ovls;
-        return;
-    }
+    uint32_t max_primary_overlays = max_overlays - hwc_dev->last_ext_ovls;
+    uint32_t max_external_overlays = max_overlays - hwc_dev->last_int_ovls;
 
-    composition_t *ext_comp = &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]->composition;
-    external_display_t *ext = NULL;
-    if (hwc_dev->displays[HWC_DISPLAY_EXTERNAL]->type == DISP_TYPE_HDMI)
-        ext = &((external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL])->ext;
+    composition_t *primary_comp = &primary_display->composition;
 
-    if (ext->is_mirroring) {
+    primary_comp->ovl_ix_base = ovl_ix_base;
+    primary_comp->wanted_ovls = max_overlays;
+    primary_comp->avail_ovls = max_primary_overlays;
+    primary_comp->scaling_ovls = primary_comp->avail_ovls - num_nonscaling_overlays;
+    primary_comp->used_ovls = 0;
+
+    if (hwc_dev->displays[HWC_DISPLAY_EXTERNAL]) {
         /*
-         * otherwise, manage just from half the pipelines.  NOTE: there is
-         * no danger of having used too many overlays for external display here.
+         * For primary display we must reserve at least one overlay for FB, plus an extra
+         * overlay for each protected layer.
          */
-        primary_comp->wanted_ovls = MAX_HW_OVERLAYS >> 1;
-        primary_comp->avail_ovls = primary_comp->wanted_ovls;
+        layer_statistics_t *primary_layer_stats = &primary_display->layer_stats;
+        uint32_t min_primary_overlays = MIN(1 + primary_layer_stats->protected, max_overlays);
+
+        /* Share available overlays between primary and external displays. */
+        primary_comp->wanted_ovls = MAX(max_overlays / 2, min_primary_overlays);
+        primary_comp->avail_ovls = MIN(max_primary_overlays, primary_comp->wanted_ovls);
 
         /*
-         * :TRICKY: We may not have enough overlays on the external display.  We "reserve" them
-         * here to figure out if mirroring is supported, but may not do mirroring for the first
-         * frame while the overlays required for it are cleared.
+         * We may not have enough overlays on the external display. We "reserve" them here but
+         * may not do external composition for the first frame while the overlays required for
+         * it are cleared.
          */
-        ext_comp->wanted_ovls = MAX_HW_OVERLAYS - primary_comp->avail_ovls;
-        ext_comp->avail_ovls = ext_comp->wanted_ovls;
-        ext_comp->avail_ovls = MIN(MAX_HW_OVERLAYS - hwc_dev->last_int_ovls, ext_comp->avail_ovls);
+        composition_t *ext_comp = &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]->composition;
+
+        ext_comp->wanted_ovls = max_overlays - primary_comp->wanted_ovls;
+        ext_comp->avail_ovls = MIN(max_external_overlays, ext_comp->wanted_ovls);
         ext_comp->scaling_ovls = ext_comp->avail_ovls;
+        ext_comp->used_ovls = 0;
+        ext_comp->ovl_ix_base = MAX_HW_OVERLAYS - ext_comp->avail_ovls;
 
-        /* if protected layer we need dedicated overlay for rendering */
-        if (!layer_stats->protected && ext_comp->avail_ovls)
-            primary_comp->avail_ovls = ext_comp->avail_ovls;
+        if (is_external_display_mirroring(hwc_dev)) {
+            /*
+             * If mirroring, we are limited on primary composition by number of available external
+             * overlays. We should be able to clone all primary overlays to external. Still we
+             * should not go below min_primary_overlays to sustain the primary composition. This
+             * may result in some overlays not being cloned to external display.
+             */
+            if (ext_comp->avail_ovls && primary_comp->avail_ovls > ext_comp->avail_ovls)
+                primary_comp->avail_ovls = MAX(min_primary_overlays, ext_comp->avail_ovls);
+        }
     }
-
-    /* If FB is not same resolution as LCD don't use GFX pipe line*/
-    if (hwc_dev->displays[HWC_DISPLAY_PRIMARY]->transform.scaling) {
-        primary_comp->avail_ovls -= NUM_NONSCALING_OVERLAYS;
-        primary_comp->scaling_ovls = primary_comp->avail_ovls;
-    } else
-        primary_comp->scaling_ovls = primary_comp->avail_ovls - NUM_NONSCALING_OVERLAYS;
 }
 
 static bool can_dss_render_all_for_display(omap_hwc_device_t *hwc_dev, int disp)
@@ -1023,33 +1038,32 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     if (is_hdmi_display(hwc_dev, disp))
         comp->swap_rb = 0; /* hdmi manager doesn't support R&B swap */
 
-    /* setup pipes */
+    /* setup DSS overlays */
     int z = 0;
     int fb_z = -1;
     bool scaled_gfx = false;
-
-    /* If the SGX is used or we are going to blit something we need a framebuffer and a DSS pipe */
-    bool needs_fb = comp->use_sgx || blit_all;
-
-    /* If a framebuffer is needed, begin using VID1 for DSS overlay layers, we need GFX for FB */
-    dsscomp->num_ovls = needs_fb ? OMAP_DSS_VIDEO1 : OMAP_DSS_GFX;
-    comp->num_buffers = 0;
-
-    /* set up if DSS layers */
+    uint32_t ovl_ix = comp->ovl_ix_base;
     uint32_t mem_used = 0;
     uint32_t i;
+
+    dsscomp->num_ovls = 0;
+    comp->num_buffers = 0;
+
+    /*
+     * If the SGX is used or we are going to blit something we need a framebuffer and an overlay
+     * for it. Reserve GFX for FB and begin using VID1 for DSS overlay layers.
+     */
+    bool needs_fb = comp->use_sgx || blit_all;
+    if (needs_fb) {
+        dsscomp->num_ovls++;
+        ovl_ix++;
+    }
+
     uint32_t tiler1d_slot_size = hwc_dev->platform_limits.tiler1d_slot_size;
-    uint32_t ovl_offset = hwc_dev->displays[disp]->transform.scaling ? 1 : 0;
     if ((hwc_dev->last_ext_ovls || hwc_dev->displays[HWC_DISPLAY_EXTERNAL]) &&
         (get_display_mode(hwc_dev, HWC_DISPLAY_EXTERNAL) != DISP_MODE_LEGACY)) {
         tiler1d_slot_size = tiler1d_slot_size >> 1;
     }
-
-    if (disp == HWC_DISPLAY_EXTERNAL) {
-        ovl_offset = MAX_HW_OVERLAYS - comp->avail_ovls;
-    }
-
-    uint32_t ovl_ix = ovl_offset + dsscomp->num_ovls;
 
     for (i = 0; list && i < list->numHwLayers && !blit_all; i++) {
         hwc_layer_1_t *layer = &list->hwLayers[i];
@@ -1147,7 +1161,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
             fb_z = z++;
         }
 
-        setup_framebuffer(hwc_dev, disp, ovl_offset, fb_z);
+        setup_framebuffer(hwc_dev, disp, comp->ovl_ix_base, fb_z);
     }
 
     comp->used_ovls = dsscomp->num_ovls;
