@@ -165,11 +165,13 @@ status_t DSSWBHal::releaseWB(int wbHandle) {
 
     // reset member variables at end of session
     for (Vector<BufferSlot>::iterator it = mBufferSlots.begin(); it != mBufferSlots.end(); ++it) {
-        err = mGrallocModule->unregisterBuffer(mGrallocModule, it->handle);
-        if (err != 0)
-            ALOGW("unable to unregister buffer from SF allocator");
-        native_handle_close(it->handle);
-        native_handle_delete(it->handle);
+        if (it->state != BufferSlot::FREE) {
+            err = mGrallocModule->unregisterBuffer(mGrallocModule, it->handle);
+            if (err != 0)
+                ALOGW("unable to unregister buffer from SF allocator");
+            native_handle_close(it->handle);
+            native_handle_delete(it->handle);
+        }
     }
 
     mBufferSlots.clear();
@@ -179,10 +181,22 @@ status_t DSSWBHal::releaseWB(int wbHandle) {
     return NO_ERROR;
 }
 
+status_t DSSWBHal::registerBuffer(int wbHandle, int bufIndex, buffer_handle_t handle) {
+    ALOGV("DSSWBHal::registerBuffer");
+    AutoMutex lock(mLock);
+
+    if (wbHandle != mWBHandle)
+        return PERMISSION_DENIED;
+
+    if (bufIndex < 0)
+        return BAD_VALUE;
+
+    return registerBufferLocked(bufIndex, handle);
+}
+
 status_t DSSWBHal::registerBuffers(int wbHandle, int numBuffers, buffer_handle_t handles[]) {
     ALOGV("DSSWBHal::registerBuffers");
     AutoMutex lock(mLock);
-    status_t err;
 
     if (wbHandle != mWBHandle)
         return PERMISSION_DENIED;
@@ -192,22 +206,18 @@ status_t DSSWBHal::registerBuffers(int wbHandle, int numBuffers, buffer_handle_t
 
     // allow buffer registration only once per WB session
     // TODO: allow multiple registrations of buffers to support dynamic change of capture resolution
-    if (!mBufferSlots.empty())
+    if (!mBufferSlots.empty()) {
+        ALOGE("buffers have been already registered");
         return ALREADY_EXISTS;
+    }
+
+    // grow mBufferSlots vector
+    mBufferSlots.insertAt(0, numBuffers);
 
     for (int i = 0; i < numBuffers; ++i) {
-        BufferSlot slot;
-        slot.handle = (native_handle_t *)handles[i];
-        slot.state = BufferSlot::DEQUEUED;
-
-        err = mGrallocModule->registerBuffer(mGrallocModule, slot.handle);
-        if (err) {
-            ALOGE("unable to register handle with SF allocator");
+        status_t err = registerBufferLocked(i, handles[i]);
+        if (err)
             return err;
-        }
-
-        mBufferSlots.add(slot);
-        ALOGV("registered handle %p", slot.handle);
     }
 
     return NO_ERROR;
@@ -220,7 +230,7 @@ status_t DSSWBHal::queue(int wbHandle, int bufIndex) {
     if (wbHandle != mWBHandle)
         return PERMISSION_DENIED;
 
-    if (bufIndex < 0 || bufIndex >= (int)mBufferSlots.size())
+    if (bufIndex < 0 || bufIndex >= (int)mBufferSlots.size() || !mBufferSlots[bufIndex].handle)
         return BAD_INDEX;
 
     if (mBufferSlots[bufIndex].state == BufferSlot::QUEUED)
@@ -315,6 +325,39 @@ status_t DSSWBHal::getConfig(int wbHandle, wb_capture_config_t *config) {
 
 void DSSWBHal::getConfigLocked(wb_capture_config_t *config) {
     *config = mConfig;
+}
+
+status_t DSSWBHal::registerBufferLocked(int bufIndex, buffer_handle_t handle) {
+    if (handle == NULL) {
+        ALOGE("invalid buffer handle");
+        return BAD_VALUE;
+    }
+
+    if ((size_t)bufIndex >= mBufferSlots.size()) {
+        // grow mBufferSlots vector
+        mBufferSlots.insertAt(mBufferSlots.size(), bufIndex - mBufferSlots.size() + 1);
+    }
+
+    // allow buffer registration only once per WB session
+    // TODO: allow multiple registrations of buffers to support dynamic change of capture resolution
+    if (mBufferSlots[bufIndex].state != BufferSlot::FREE) {
+        ALOGE("buffer slot % is already used", bufIndex);
+        return ALREADY_EXISTS;
+    }
+
+    status_t err = mGrallocModule->registerBuffer(mGrallocModule, handle);
+    if (err) {
+        ALOGE("unable to register handle with SF allocator");
+        return err;
+    }
+
+    BufferSlot &slot = mBufferSlots.editItemAt(bufIndex);
+    slot.handle = (native_handle_t *)handle;
+    slot.state = BufferSlot::DEQUEUED;
+
+    ALOGV("registered handle %p", slot.handle);
+
+    return NO_ERROR;
 }
 
 int wb_open() {

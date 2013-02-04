@@ -50,6 +50,7 @@ public:
     // IDSSWBHal interface
     virtual status_t acquireWB(int *wbHandlePtr);
     virtual status_t releaseWB(int wbHandle);
+    virtual status_t registerBuffer(int wbHandle, int bufIndex, buffer_handle_t handle);
     virtual status_t registerBuffers(int wbHandle, int numBuffers, buffer_handle_t handles[]);
     virtual status_t queue(int wbHandle, int bufIndex);
     virtual status_t dequeue(int wbHandle, int *bufIndex);
@@ -60,10 +61,16 @@ public:
 private:
 
     struct BufferSlot {
+        BufferSlot()
+            : state(FREE),
+              handle(NULL) {
+        }
+
         enum BufferState {
-            QUEUED = 0,
-            WRITEBACK = 1,
-            DEQUEUED = 2,
+            FREE = 0,
+            QUEUED = 1,
+            WRITEBACK = 2,
+            DEQUEUED = 3,
         };
 
         BufferState state;
@@ -71,6 +78,7 @@ private:
     };
 
     void getConfigLocked(wb_capture_config_t *config);
+    status_t registerBufferLocked(int bufIndex, buffer_handle_t handle);
 
     int mWBHandle;
     Mutex mLock;
