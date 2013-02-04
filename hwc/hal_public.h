@@ -119,7 +119,9 @@ typedef struct IMG_gralloc_module_public_t
 	 * framebuffer device data required by the allocator, WSEGL
 	 * modules and composerhal.
 	 */
-	IMG_framebuffer_device_public_t *psFrameBufferDevice;
+	IMG_framebuffer_device_public_t *psPrimaryFb;
+	IMG_framebuffer_device_public_t *psSecondaryFb;
+
 
 	int (*GetPhyAddrs)(struct IMG_gralloc_module_public_t const* module,
 					   buffer_handle_t handle,
