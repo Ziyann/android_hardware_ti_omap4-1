@@ -45,7 +45,8 @@ enum bltmode {
 struct omap_hwc_module {
     hwc_module_t base;
 
-    IMG_framebuffer_device_public_t *fb_dev;
+    /* currently we use only two FB devices, but decalring for MAX_DISPLAYS */
+    IMG_framebuffer_device_public_t *fb_dev[MAX_DISPLAYS];
 };
 typedef struct omap_hwc_module omap_hwc_module_t;
 
@@ -57,7 +58,10 @@ struct omap_hwc_device {
     pthread_mutex_t lock;
 
     struct dsscomp_platform_info platform_limits;
-    IMG_framebuffer_device_public_t *fb_dev;
+
+    /* currently we use only two FB devices, but decalring for MAX_DISPLAYS */
+    IMG_framebuffer_device_public_t *fb_dev[MAX_DISPLAYS];
+
     int fb_fd;                   /* file descriptor for /dev/fb0 */
     int dsscomp_fd;              /* file descriptor for /dev/dsscomp */
     int hdmi_fb_fd;              /* file descriptor for /dev/fb1 */

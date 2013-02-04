@@ -48,12 +48,15 @@
 
 #define MAX_DISPLAY_ID (MAX_DISPLAYS - 1)
 #define INCH_TO_MM 25.4f
+#define MAX_HWC_LAYERS 32
 
 static void free_display(display_t *display)
 {
     if (display) {
         if (display->configs)
             free(display->configs);
+        if (display->composition.buffers)
+            free(display->composition.buffers);
 
         free(display);
     }
@@ -80,6 +83,15 @@ static int allocate_display(size_t display_data_size, uint32_t max_configs, disp
     }
 
     memset(display->configs, 0, config_data_size);
+
+    /* Allocate the maximum buffers that we can receive from HWC */
+    display->composition.buffers = malloc(sizeof(buffer_handle_t) * MAX_HWC_LAYERS);
+    if (!display->composition.buffers) {
+        err = -ENOMEM;
+        goto err_out;
+    }
+
+    memset(display->composition.buffers, 0, sizeof(buffer_handle_t) * MAX_HWC_LAYERS);
 
 err_out:
 
@@ -138,8 +150,9 @@ static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
     /* Create primary display translation matrix */
     int lcd_w = hwc_dev->fb_dis.timings.x_res;
     int lcd_h = hwc_dev->fb_dis.timings.y_res;
-    int orig_w = hwc_dev->fb_dev->base.width;
-    int orig_h = hwc_dev->fb_dev->base.height;
+    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
+    int orig_w = fb_dev->base.width;
+    int orig_h = fb_dev->base.height;
     hwc_rect_t region = {.left = 0, .top = 0, .right = orig_w, .bottom = orig_h};
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
@@ -193,8 +206,9 @@ static int allocate_tiler2d_buffers(omap_hwc_device_t *hwc_dev, external_hdmi_di
             return 0;
     }
 
+    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
     for (i = 0 ; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
-        ret = ion_alloc_tiler(display->ion_fd, hwc_dev->fb_dev->base.width, hwc_dev->fb_dev->base.height,
+        ret = ion_alloc_tiler(display->ion_fd, fb_dev->base.width, fb_dev->base.height,
                               TILER_PIXEL_FMT_32BIT, 0, &display->ion_handles[i], &stride);
         if (ret)
             goto handle_error;
@@ -222,8 +236,9 @@ static int init_primary_lcd_display(omap_hwc_device_t *hwc_dev)
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
     display_config_t *config = &display->configs[0];
-    int xres = hwc_dev->fb_dev->base.width;
-    int yres = hwc_dev->fb_dev->base.height;
+    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
+    int xres = fb_dev->base.width;
+    int yres = fb_dev->base.height;
     display->type = DISP_TYPE_LCD;
     display->role = DISP_ROLE_PRIMARY;
 
@@ -245,8 +260,9 @@ static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev)
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
     display_config_t *config = &display->configs[0];
-    int xres = hwc_dev->fb_dev->base.width;
-    int yres = hwc_dev->fb_dev->base.height;
+    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
+    int xres = fb_dev->base.width;
+    int yres = fb_dev->base.height;
     display->type = DISP_TYPE_HDMI;
     display->role = DISP_ROLE_PRIMARY;
 
@@ -494,7 +510,7 @@ uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
         return DISP_MODE_INVALID;
 
     if (disp == HWC_DISPLAY_PRIMARY)
-        return DISP_MODE_LEGACY;
+        return DISP_MODE_PRESENTATION;
 
     display_t *display = hwc_dev->displays[disp];
 
