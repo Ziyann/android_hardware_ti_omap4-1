@@ -46,6 +46,7 @@ public:
 
     virtual status_t acquireWB(int *wbHandlePtr) = 0;
     virtual status_t releaseWB(int wbHandle) = 0;
+    virtual status_t registerBuffer(int wbHandle, int bufIndex, buffer_handle_t handle) = 0;
     virtual status_t registerBuffers(int wbHandle, int numBuffers, buffer_handle_t handles[]) = 0;
     virtual status_t queue(int wbHandle, int bufIndex) = 0;
     virtual status_t dequeue(int wbHandle, int *bufIndex) = 0;

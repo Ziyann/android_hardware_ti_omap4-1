@@ -30,6 +30,7 @@ namespace android {
 enum {
     ACQUIRE_WB = IBinder::FIRST_CALL_TRANSACTION,
     RELEASE_WB,
+    REGISTER_BUFFER,
     REGISTER_BUFFERS,
     QUEUE,
     DEQUEUE,
@@ -58,6 +59,17 @@ public:
         data.writeInterfaceToken(IDSSWBHal::getInterfaceDescriptor());
         data.writeInt32(wbHandle);
         remote()->transact(RELEASE_WB, data, &reply);
+        return reply.readInt32();
+    }
+
+    virtual status_t registerBuffer(int wbHandle, int bufIndex, buffer_handle_t handle) {
+        Parcel data, reply;
+        data.writeInterfaceToken(IDSSWBHal::getInterfaceDescriptor());
+        data.writeInt32(wbHandle);
+        data.writeInt32(bufIndex);
+        data.writeNativeHandle(handle);
+
+        remote()->transact(REGISTER_BUFFER, data, &reply);
         return reply.readInt32();
     }
 
@@ -162,6 +174,15 @@ status_t BnDSSWBHal::onTransact(uint32_t code, const Parcel& data, Parcel* reply
             CHECK_INTERFACE(IDSSWBHal, data, reply);
             int wbHandle = data.readInt32();
             reply->writeInt32(releaseWB(wbHandle));
+            return NO_ERROR;
+        } break;
+        case REGISTER_BUFFER: {
+            CHECK_INTERFACE(IDSSWBHal, data, reply);
+            int wbHandle = data.readInt32();
+            int bufIndex = data.readInt32();
+            buffer_handle_t handle = data.readNativeHandle();
+
+            reply->writeInt32(registerBuffer(wbHandle, bufIndex, handle));
             return NO_ERROR;
         } break;
         case REGISTER_BUFFERS: {
