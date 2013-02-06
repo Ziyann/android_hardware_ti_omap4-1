@@ -53,6 +53,7 @@ enum disp_type {
     DISP_TYPE_UNKNOWN,
     DISP_TYPE_LCD,
     DISP_TYPE_HDMI,
+    DISP_TYPE_WFD,
 };
 
 enum disp_mode {
@@ -156,7 +157,9 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev);
 
-int set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
+void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
+void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
+
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs);
 int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t config, const uint32_t *attributes, int32_t *values);
 uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp);

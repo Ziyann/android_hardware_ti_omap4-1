@@ -46,6 +46,11 @@
 #define HDMI_DISPLAY_FPS 60
 #define HDMI_DISPLAY_DEFAULT_DPI 75
 
+/* Currently SF cannot handle more than 1 config */
+#define WFD_DISPLAY_CONFIGS 1
+#define WFD_DISPLAY_FPS 60
+#define WFD_DISPLAY_DEFAULT_DPI 75
+
 #define MAX_DISPLAY_ID (MAX_DISPLAYS - 1)
 #define INCH_TO_MM 25.4f
 #define MAX_HWC_LAYERS 32
@@ -60,6 +65,12 @@ static void free_display(display_t *display)
 
         free(display);
     }
+}
+
+static void remove_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    free_display(hwc_dev->displays[disp]);
+    hwc_dev->displays[disp] = NULL;
 }
 
 static int allocate_display(size_t display_data_size, uint32_t max_configs, display_t **new_display)
@@ -105,7 +116,7 @@ err_out:
     return err;
 }
 
-static int get_display_info(omap_hwc_device_t *hwc_dev, int disp, struct dsscomp_display_info *info)
+static int get_dsscomp_display_info(omap_hwc_device_t *hwc_dev, int disp, struct dsscomp_display_info *info)
 {
     memset(info, 0, sizeof(*info));
     info->ix = disp;
@@ -117,6 +128,24 @@ static int get_display_info(omap_hwc_device_t *hwc_dev, int disp, struct dsscomp
     }
 
     return 0;
+}
+
+static int get_virtual_display_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents,
+        hwc_display_info_t *info)
+{
+    memset(info, 0, sizeof(*info));
+    info->dpy = disp;
+
+    if (!(contents->flags & HWC_EXTENDED_API) || !hwc_dev->procs || !hwc_dev->procs->extension_cb)
+        return -EACCES;
+
+    int err = hwc_dev->procs->extension_cb(hwc_dev->procs, HWC_EXTENDED_OP_DISPLAYINFO,
+            (void **) &info, sizeof(*info));
+
+    if (err)
+        err = -ENODEV;
+
+    return err;
 }
 
 static void setup_config(display_config_t *config, int xres, int yres, struct dsscomp_display_info *info,
@@ -143,6 +172,15 @@ static void setup_lcd_config(display_config_t *config, int xres, int yres, struc
 static void setup_hdmi_config(display_config_t *config, int xres, int yres, struct dsscomp_display_info *info)
 {
     setup_config(config, xres, yres, info, HDMI_DISPLAY_FPS, HDMI_DISPLAY_DEFAULT_DPI);
+}
+
+static void setup_wfd_config(display_config_t *config, hwc_display_info_t *info)
+{
+    config->xres = info->width;
+    config->yres = info->height;
+    config->fps = WFD_DISPLAY_FPS;
+    config->xdpi = WFD_DISPLAY_DEFAULT_DPI;
+    config->ydpi = WFD_DISPLAY_DEFAULT_DPI;
 }
 
 static int init_primary_lcd_display(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres)
@@ -258,6 +296,32 @@ handle_error:
     return -ENOMEM;
 }
 
+static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents)
+{
+    int err;
+
+    hwc_display_info_t display_info;
+    err = get_virtual_display_info(hwc_dev, disp, contents, &display_info);
+    if (err)
+        return err;
+
+    err = allocate_display(sizeof(display_t), WFD_DISPLAY_CONFIGS, &hwc_dev->displays[disp]);
+    if (err)
+        return err;
+
+    display_t *display = hwc_dev->displays[disp];
+
+    setup_wfd_config(&display->configs[0], &display_info);
+
+    display->type = DISP_TYPE_WFD;
+    display->role = DISP_ROLE_EXTERNAL;
+
+    // HACK: disable WFD display while WB is not fully functional
+    display->type = DISP_TYPE_UNKNOWN;
+
+    return 0;
+}
+
 int init_primary_display(omap_hwc_device_t *hwc_dev)
 {
     if (hwc_dev->displays[HWC_DISPLAY_PRIMARY]) {
@@ -267,7 +331,7 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
 
     int err;
 
-    err = get_display_info(hwc_dev, HWC_DISPLAY_PRIMARY, &hwc_dev->fb_dis);
+    err = get_dsscomp_display_info(hwc_dev, HWC_DISPLAY_PRIMARY, &hwc_dev->fb_dis);
     if (err)
         return -ENODEV;
 
@@ -329,11 +393,11 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
 
     int err;
     struct dsscomp_display_info info;
-    err = get_display_info(hwc_dev, HWC_DISPLAY_EXTERNAL, &info);
+
+    err = get_dsscomp_display_info(hwc_dev, HWC_DISPLAY_EXTERNAL, &info);
     if (err)
         return err;
 
-    /* Currently SF cannot handle more than 1 config */
     err = allocate_display(sizeof(external_hdmi_display_t), HDMI_DISPLAY_CONFIGS, &hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
     if (err)
         return err;
@@ -371,8 +435,10 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
 void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev)
 {
     display_t *display = hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-    if (!display)
+    if (!display) {
+        ALOGW("Failed to remove non-existent display %d", HWC_DISPLAY_EXTERNAL);
         return;
+    }
 
     external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
     if (display->transform.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
@@ -383,8 +449,7 @@ void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev)
             ion_close(ext_hdmi->ion_fd);
     }
 
-    free_display(hwc_dev->displays[HWC_DISPLAY_EXTERNAL]);
-    hwc_dev->displays[HWC_DISPLAY_EXTERNAL] = NULL;
+    remove_display(hwc_dev, HWC_DISPLAY_EXTERNAL);
 }
 
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev)
@@ -400,7 +465,30 @@ struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev
     }
 }
 
-int set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays) {
+void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays) {
+    size_t i;
+
+    if (num_displays > MAX_DISPLAYS)
+        num_displays = MAX_DISPLAYS;
+
+    for (i = HWC_DISPLAY_EXTERNAL + 1; i < num_displays; i++) {
+        if (displays[i] && !hwc_dev->displays[i]) {
+            int err = add_virtual_wfd_display(hwc_dev, i, displays[i]);
+            if (err)
+                ALOGE("Failed to connect virtual display %d (%d)", i, err);
+            else
+                ALOGI("Virtual display %d has been connected", i);
+        }
+
+        if (!displays[i] && hwc_dev->displays[i]) {
+            remove_display(hwc_dev, i);
+
+            ALOGI("Virtual display %d has been disconnected", i);
+        }
+    }
+}
+
+void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays) {
     size_t i;
 
     if (num_displays > MAX_DISPLAYS)
@@ -413,15 +501,12 @@ int set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_di
 
             gather_layer_statistics(hwc_dev, display->contents, &display->layer_stats);
         }
-
     }
 
     for ( ; i < MAX_DISPLAYS; i++) {
         if (hwc_dev->displays[i])
             hwc_dev->displays[i]->contents = NULL;
     }
-
-    return 0;
 }
 
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs)
@@ -515,6 +600,9 @@ uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
         return DISP_MODE_PRESENTATION;
 
     display_t *display = hwc_dev->displays[disp];
+
+    if (display->type == DISP_TYPE_UNKNOWN)
+        return DISP_MODE_INVALID;
 
     if (!display->contents)
         return DISP_MODE_INVALID;
