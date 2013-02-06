@@ -966,13 +966,15 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     if (disp < 0 || disp >= MAX_DISPLAYS || !hwc_dev->displays[disp])
         return -ENODEV;
 
-    hwc_display_contents_1_t *list = hwc_dev->displays[disp]->contents;
-    if (!list)
+    display_t *display = hwc_dev->displays[disp];
+
+    if (display->type == DISP_TYPE_UNKNOWN || !display->contents)
         return 0;
 
-    composition_t *comp = &hwc_dev->displays[disp]->composition;
+    hwc_display_contents_1_t *list = display->contents;
+    composition_t *comp = &display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
-    layer_statistics_t *layer_stats = &hwc_dev->displays[disp]->layer_stats;
+    layer_statistics_t *layer_stats = &display->layer_stats;
     blitter_config_t *blitter = &hwc_dev->blitter;
 
     if (get_display_mode(hwc_dev, disp) == DISP_MODE_LEGACY) {
@@ -987,7 +989,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
                 break;
         }
 
-        for (i = 0; list && i < list->numHwLayers; i++) {
+        for (i = 0; i < list->numHwLayers; i++) {
             hwc_layer_1_t *layer = &list->hwLayers[i];
             if (layer->compositionType == HWC_FRAMEBUFFER_TARGET)
                 continue;
@@ -1062,7 +1064,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         tiler1d_slot_size = tiler1d_slot_size >> 1;
     }
 
-    for (i = 0; list && i < list->numHwLayers && !blit_all; i++) {
+    for (i = 0; i < list->numHwLayers && !blit_all; i++) {
         hwc_layer_1_t *layer = &list->hwLayers[i];
 
         if (dsscomp->num_ovls < comp->avail_ovls &&
@@ -1168,7 +1170,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         hwc_dev->last_ext_ovls = comp->used_ovls;
 
     /* Apply transform for display */
-    if (hwc_dev->displays[disp]->transform.scaling)
+    if (display->transform.scaling)
         for (i = 0; i < dsscomp->num_ovls; i++) {
             adjust_overlay_to_display(hwc_dev, disp, &dsscomp->ovls[i]);
         }
@@ -1244,8 +1246,10 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     }
 
     omap_hwc_device_t *hwc_dev = (omap_hwc_device_t *)dev;
+
     pthread_mutex_lock(&hwc_dev->lock);
 
+    detect_virtual_displays(hwc_dev, numDisplays, displays);
     set_display_contents(hwc_dev, numDisplays, displays);
 
     external_display_t *ext = NULL;
@@ -1263,16 +1267,30 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     reset_blitter(hwc_dev);
 
     uint32_t i;
+    int err = 0;
     for (i = 0; i < numDisplays; i++) {
-        hwc_prepare_for_display(hwc_dev, i);
+        if (displays[i]) {
+            int disp_err = hwc_prepare_for_display(hwc_dev, i);
+            if (!err && disp_err)
+                err = disp_err;
+        }
     }
 
     pthread_mutex_unlock(&hwc_dev->lock);
-    return 0;
+
+    return err;
 }
 
 static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *list)
 {
+    if (disp < 0 || disp >= MAX_DISPLAYS || !hwc_dev->displays[disp])
+        return list ? -ENODEV : 0;
+
+    display_t *display = hwc_dev->displays[disp];
+
+    if (display->type == DISP_TYPE_UNKNOWN || get_display_mode(hwc_dev, disp) == DISP_MODE_LEGACY)
+        return 0;
+
     hwc_display_t dpy = NULL;
     hwc_surface_t sur = NULL;
     if (list != NULL) {
@@ -1280,8 +1298,8 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
         sur = list->sur;
     }
 
-    layer_statistics_t *layer_stats = &hwc_dev->displays[disp]->layer_stats;
-    composition_t *comp = &hwc_dev->displays[disp]->composition;
+    layer_statistics_t *layer_stats = &display->layer_stats;
+    composition_t *comp = &display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
     blitter_config_t *blitter = &hwc_dev->blitter;
 
@@ -1384,12 +1402,14 @@ static int hwc_set(struct hwc_composer_device_1 *dev,
         ALOGD("set: empty display list");
         return 0;
     }
-    uint32_t i;
+
     omap_hwc_device_t *hwc_dev = (omap_hwc_device_t*)dev;
-    int err = -1;
-    for (i = 0; i < numDisplays && hwc_dev->displays[i] && displays[i]; i++) {
-        if (get_display_mode(hwc_dev,i) != DISP_MODE_LEGACY)
-            err = hwc_set_for_display(hwc_dev, i, displays[i]);
+    uint32_t i;
+    int err = 0;
+    for (i = 0; i < numDisplays; i++) {
+        int disp_err = hwc_set_for_display(hwc_dev, i, displays[i]);
+        if (!err && disp_err)
+            err = disp_err;
     }
 
     return err;
