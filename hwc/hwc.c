@@ -130,14 +130,21 @@ static void dump_dsscomp(struct dsscomp_setup_dispc_data *d)
     for (i = 0; i < d->num_ovls; i++) {
         struct dss2_ovl_info *oi = &d->ovls[i];
         struct dss2_ovl_cfg *c = &oi->cfg;
+        char writeback[20] = {'\0'};
+        if (c->ix == OMAP_DSS_WB)
+            sprintf(writeback, "wb(%s@%s%d) => ",
+                    c->wb_mode == OMAP_WB_MEM2MEM_MODE ? "m2m" : "cap",
+                    c->wb_source < OMAP_WB_GFX ? "mgr" : "ovl",
+                    c->wb_source < OMAP_WB_GFX ? c->wb_source : c->wb_source - OMAP_WB_GFX);
         if (c->zonly)
-            ALOGD("ovl%d(%s z%d)\n",
-                 c->ix, c->enabled ? "ON" : "off", c->zorder);
+            ALOGD("ovl%d@%d(%s z%d)\n",
+                 c->ix, c->mgr_ix, c->enabled ? "ON" : "off", c->zorder);
         else
-            ALOGD("ovl%d(%s z%d %s%s *%d%% %d*%d:%d,%d+%d,%d rot%d%s => %d,%d+%d,%d %p/%p|%d)\n",
-                 c->ix, c->enabled ? "ON" : "off", c->zorder, DSS_FMT(c->color_mode),
+            ALOGD("ovl%d@%d(%s z%d %s%s *%d%% %s%d*%d:%d,%d+%d,%d rot%d%s => %d,%d+%d,%d %p/%p|%d)\n",
+                 c->ix, c->mgr_ix, c->enabled ? "ON" : "off", c->zorder, DSS_FMT(c->color_mode),
                  c->pre_mult_alpha ? " premult" : "",
                  (c->global_alpha * 100 + 128) / 255,
+                 writeback,
                  c->width, c->height, c->crop.x, c->crop.y,
                  c->crop.w, c->crop.h,
                  c->rotation, c->mirror ? "+mir" : "",
@@ -198,7 +205,7 @@ static void dump_set_info(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *
     for (i = 0; i < dsscomp->num_ovls; i++) {
         if (i)
             dump_printf(&log, " ");
-        dump_printf(&log, "%d=", dsscomp->ovls[i].cfg.ix);
+        dump_printf(&log, "%d@%d=", dsscomp->ovls[i].cfg.ix, dsscomp->ovls[i].cfg.mgr_ix);
         if (dsscomp->ovls[i].cfg.enabled)
             dump_printf(&log, "%08x:%d*%d,%s",
                         dsscomp->ovls[i].ba,
@@ -1438,42 +1445,78 @@ static int hwc_set(struct hwc_composer_device_1 *dev,
     return err;
 }
 
-static void hwc_dump(struct hwc_composer_device_1 *dev, char *buff, int buff_len)
+static void dump_hwc_info(omap_hwc_device_t *hwc_dev, struct dump_buf *log)
 {
-    omap_hwc_device_t *hwc_dev = (omap_hwc_device_t *)dev;
-    composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
-    struct dsscomp_setup_dispc_data *dsscomp = &primary_comp->comp_data.dsscomp_data;
-    struct dump_buf log = {
-        .buf = buff,
-        .buf_len = buff_len,
-    };
-    int i;
-
-    dump_printf(&log, "omap_hwc %d:\n", dsscomp->num_ovls);
-    dump_printf(&log, "  idle timeout: %dms\n", hwc_dev->idle);
-
-    for (i = 0; i < dsscomp->num_ovls; i++) {
-        struct dss2_ovl_cfg *cfg = &dsscomp->ovls[i].cfg;
-
-        dump_printf(&log, "  layer %d:\n", i);
-        dump_printf(&log, "     enabled:%s buff:%p %dx%d stride:%d\n",
-                          cfg->enabled ? "true" : "false", primary_comp->buffers[i],
-                          cfg->width, cfg->height, cfg->stride);
-        dump_printf(&log, "     src:(%d,%d) %dx%d dst:(%d,%d) %dx%d ix:%d zorder:%d\n",
-                          cfg->crop.x, cfg->crop.y, cfg->crop.w, cfg->crop.h,
-                          cfg->win.x, cfg->win.y, cfg->win.w, cfg->win.h,
-                          cfg->ix, cfg->zorder);
-    }
+    dump_printf(log, "OMAP HWC %d.%d:\n",
+                     (hwc_dev->base.common.version >> 24) & 0xff,
+                     (hwc_dev->base.common.version >> 16) & 0xff);
+    dump_printf(log, "  idle timeout: %dms\n", hwc_dev->idle);
 
     blitter_config_t *blitter = &hwc_dev->blitter;
 
     if (blitter->policy != BLT_POLICY_DISABLED) {
-        dump_printf(&log, "  bltpolicy: %s, bltmode: %s\n",
-            blitter->policy == BLT_POLICY_DEFAULT ? "default" :
-                blitter->policy == BLT_POLICY_ALL ? "all" : "unknown",
-                    blitter->mode == BLT_MODE_PAINT ? "paint" : "regionize");
+        dump_printf(log, "  blitter:\n");
+        dump_printf(log, "    policy: %s, mode: %s\n",
+                         blitter->policy == BLT_POLICY_DEFAULT ? "default" :
+                         blitter->policy == BLT_POLICY_ALL ? "all" : "unknown",
+                         blitter->mode == BLT_MODE_PAINT ? "paint" : "regionize");
     }
-    dump_printf(&log, "\n");
+}
+
+static void dump_display(omap_hwc_device_t *hwc_dev, struct dump_buf *log, int disp)
+{
+    display_t *display = hwc_dev->displays[disp];
+    display_config_t *config = &display->configs[display->active_config_ix];
+
+    dump_printf(log, "  display[%d]: %s %dx%d\n",
+                     disp,
+                     display->type == DISP_TYPE_LCD ? "LCD" :
+                     display->type == DISP_TYPE_HDMI ? "HDMI" :
+                     display->type == DISP_TYPE_WFD ? "WFD" : "unknown",
+                     config->xres, config->yres);
+
+    if (get_display_mode(hwc_dev, disp) == DISP_MODE_LEGACY) {
+        dump_printf(log, "    legacy mode\n");
+        return;
+    }
+
+    composition_t *comp = &hwc_dev->displays[disp]->composition;
+    struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    int i;
+
+    for (i = 0; i < dsscomp->num_ovls; i++) {
+        struct dss2_ovl_cfg *cfg = &dsscomp->ovls[i].cfg;
+
+        dump_printf(log, "    layer[%d]:\n", i);
+        dump_printf(log, "      enabled:%s buff:%p %dx%d stride:%d\n",
+                         cfg->enabled ? "true" : "false", comp->buffers[i],
+                         cfg->width, cfg->height, cfg->stride);
+        dump_printf(log, "      src:(%d,%d) %dx%d dst:(%d,%d) %dx%d ix:%d@%d z:%d\n",
+                         cfg->crop.x, cfg->crop.y, cfg->crop.w, cfg->crop.h,
+                         cfg->win.x, cfg->win.y, cfg->win.w, cfg->win.h,
+                         cfg->ix, cfg->mgr_ix, cfg->zorder);
+    }
+}
+
+static void hwc_dump(struct hwc_composer_device_1 *dev, char *buff, int buff_len)
+{
+    omap_hwc_device_t *hwc_dev = (omap_hwc_device_t *)dev;
+    struct dump_buf log = {
+        .buf = buff,
+        .buf_len = buff_len,
+    };
+
+    dump_hwc_info(hwc_dev, &log);
+
+    pthread_mutex_lock(&hwc_dev->lock);
+
+    int i;
+    for (i = 0; i < MAX_DISPLAYS; i++) {
+        if (hwc_dev->displays[i])
+            dump_display(hwc_dev, &log, i);
+    }
+
+    pthread_mutex_unlock(&hwc_dev->lock);
 }
 
 static int hwc_device_close(hw_device_t* device)
