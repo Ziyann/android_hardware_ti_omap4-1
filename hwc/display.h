@@ -128,6 +128,7 @@ struct hdmi_display {
     uint16_t height;
     uint32_t current_mode;
     uint32_t last_mode;
+    struct dsscomp_videomode mode_db[MAX_DISPLAY_CONFIGS];
 };
 typedef struct hdmi_display hdmi_display_t;
 

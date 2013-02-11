@@ -360,21 +360,27 @@ static void set_ext_matrix(omap_hwc_device_t *hwc_dev, struct hwc_rect region)
     /* get target size */
     uint32_t adj_xres, adj_yres;
     uint32_t width, height;
+    int xres, yres;
     if (ext->type == DISP_TYPE_HDMI) {
-        width = ((external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL])->hdmi.width;
-        height = ((external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL])->hdmi.height;
+        hdmi_display_t *hdmi = &((external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL])->hdmi;
+        width = hdmi->width;
+        height = hdmi->height;
+        xres = hdmi->mode_db[~hdmi->current_mode].xres;
+        yres = hdmi->mode_db[~hdmi->current_mode].yres;
+        hdmi->base.transform.scaling = ((xres != orig_w) || (yres != orig_h)) ? 1 : 0;
     } else {
         width = 0;
         height = 0;
+        xres = 0;
+        yres = 0;
     }
 
-    display_config_t *ext_config = &ext->configs[ext->active_config_ix];
     get_max_dimensions(orig_w, orig_h, xpy,
-                       ext_config->xres, ext_config->yres, width, height,
+                       xres, yres, width, height,
                        &adj_xres, &adj_yres);
 
     scale_matrix(ext->transform.matrix, orig_w, adj_xres, orig_h, adj_yres);
-    translate_matrix(ext->transform.matrix, ext_config->xres >> 1, ext_config->yres >> 1);
+    translate_matrix(ext->transform.matrix, xres >> 1, yres >> 1);
 }
 
 static int crop_overlay_to_rect(struct hwc_rect vis_rect, struct dss2_ovl_info *ovl)
@@ -602,20 +608,13 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres,
         return -EINVAL;
 
     uint32_t i, best = ~0, best_score = 0;
-    display_config_t *hdmi_config = &hdmi->base.configs[hdmi->base.active_config_ix];
     hdmi->width = d.dis.width_in_mm;
     hdmi->height = d.dis.height_in_mm;
-    hdmi_config->xres = d.dis.timings.x_res;
-    hdmi_config->yres = d.dis.timings.y_res;
-
-    /* use VGA external resolution as default */
-    if (!hdmi_config->xres || !hdmi_config->yres) {
-        hdmi_config->xres = 640;
-        hdmi_config->yres = 480;
-    }
 
     uint32_t ext_fb_xres, ext_fb_yres;
     for (i = 0; i < d.dis.modedb_len; i++) {
+        hdmi->mode_db[i] = d.modedb[i];
+
         uint32_t score = 0;
         uint32_t mode_xres = d.modedb[i].xres;
         uint32_t mode_yres = d.modedb[i].yres;
@@ -663,8 +662,6 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres,
         if (best_score < score) {
             hdmi->width = ext_width;
             hdmi->height = ext_height;
-            hdmi_config->xres = mode_xres;
-            hdmi_config->yres = mode_yres;
             best = i;
             best_score = score;
         }
