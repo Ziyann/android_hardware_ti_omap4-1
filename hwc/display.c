@@ -271,7 +271,7 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
     if (err)
         return -ENODEV;
 
-    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
+    IMG_framebuffer_device_public_t *fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
     uint32_t xres = fb_dev->base.width;
     uint32_t yres = fb_dev->base.height;
 
@@ -343,8 +343,9 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
     display->type = DISP_TYPE_HDMI;
     display->role = DISP_ROLE_EXTERNAL;
 
-    int xres = WIDTH(display->transform.region);
-    int yres = HEIGHT(display->transform.region);
+    IMG_framebuffer_device_public_t *fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_EXTERNAL];
+    uint32_t xres = fb_dev->base.width;
+    uint32_t yres = fb_dev->base.height;
 
     // TODO: Verify that HDMI supports xres x yres
     // TODO: Set HDMI resolution? What if we need to do docking of 1080p i.s.o. Presentation?
