@@ -1566,8 +1566,14 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
     /* hwc_dev->procs is set right after the device is opened, but there is
      * still a race condition where a hotplug event might occur after the open
      * but before the procs are registered. */
-    if (hwc_dev->procs)
-        hwc_dev->procs->invalidate(hwc_dev->procs);
+    if (hwc_dev->procs) {
+        if (hwc_dev->procs->hotplug) {
+            hwc_dev->procs->hotplug(hwc_dev->procs, HWC_DISPLAY_EXTERNAL, state);
+        } else {
+            if (hwc_dev->procs->invalidate)
+                hwc_dev->procs->invalidate(hwc_dev->procs);
+        }
+    }
 }
 
 static void handle_uevents(omap_hwc_device_t *hwc_dev, const char *buff, int len)
