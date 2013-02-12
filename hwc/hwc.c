@@ -989,7 +989,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 
         for (i = 0; list && i < list->numHwLayers; i++) {
             hwc_layer_1_t *layer = &list->hwLayers[i];
-            if (!is_valid_layer(hwc_dev, layer))
+            if (layer->compositionType == HWC_FRAMEBUFFER_TARGET)
                 continue;
 
             layer->compositionType = HWC_OVERLAY;
