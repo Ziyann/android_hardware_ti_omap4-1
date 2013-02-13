@@ -83,6 +83,4 @@ bool can_scale(uint32_t src_w, uint32_t src_h, uint32_t dst_w, uint32_t dst_h, b
                struct dsscomp_display_info *dis, struct dsscomp_platform_info *limits,
                uint32_t pclk);
 
-int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres, float xpy);
-
 #endif

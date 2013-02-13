@@ -315,6 +315,7 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
 
     display->type = DISP_TYPE_WFD;
     display->role = DISP_ROLE_EXTERNAL;
+    display->mgr_ix = 1;
 
     // HACK: disable WFD display while WB is not fully functional
     display->type = DISP_TYPE_UNKNOWN;
@@ -355,6 +356,7 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
     display->role = DISP_ROLE_PRIMARY;
+    display->mgr_ix = 0;
 
     set_primary_display_transform_matrix(hwc_dev);
 
@@ -406,6 +408,7 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
     display_config_t *config = &display->configs[0];
     display->type = DISP_TYPE_HDMI;
     display->role = DISP_ROLE_EXTERNAL;
+    display->mgr_ix = 1;
 
     IMG_framebuffer_device_public_t *fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_EXTERNAL];
     uint32_t xres = fb_dev->base.width;
@@ -507,6 +510,21 @@ void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_d
         if (hwc_dev->displays[i])
             hwc_dev->displays[i]->contents = NULL;
     }
+}
+
+int get_external_display_id(omap_hwc_device_t *hwc_dev)
+{
+    size_t i;
+    int disp = -1;
+
+    for (i = HWC_DISPLAY_EXTERNAL; i < MAX_DISPLAYS; i++) {
+        if (hwc_dev->displays[i] && hwc_dev->displays[i]->type != DISP_TYPE_UNKNOWN) {
+            disp = i;
+            break;
+        }
+    }
+
+    return disp;
 }
 
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs)
@@ -635,14 +653,14 @@ bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
     return hwc_dev->displays[disp]->type == DISP_TYPE_HDMI;
 }
 
-bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev)
+bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (!hwc_dev->displays[HWC_DISPLAY_EXTERNAL])
+    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
         return false;
 
     external_display_t *ext = NULL;
-    if (hwc_dev->displays[HWC_DISPLAY_EXTERNAL]->type == DISP_TYPE_HDMI)
-        ext = &((external_hdmi_display_t*) hwc_dev->displays[HWC_DISPLAY_EXTERNAL])->ext;
+    if (hwc_dev->displays[disp]->type == DISP_TYPE_HDMI)
+        ext = &((external_hdmi_display_t*) hwc_dev->displays[disp])->ext;
 
     if (ext && ext->is_mirroring)
         return true;
