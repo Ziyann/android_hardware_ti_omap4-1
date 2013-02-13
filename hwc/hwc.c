@@ -364,7 +364,7 @@ static void set_ext_matrix(omap_hwc_device_t *hwc_dev, struct hwc_rect region)
     uint32_t adj_xres, adj_yres;
     uint32_t width, height;
     int xres, yres;
-    if (ext_display->type == DISP_TYPE_HDMI) {
+    if (is_hdmi_display(hwc_dev, ext_disp)) {
         hdmi_display_t *hdmi = &((external_hdmi_display_t*)ext_display)->hdmi;
         width = hdmi->width;
         height = hdmi->height;
@@ -585,7 +585,7 @@ static uint32_t add_scaling_score(uint32_t score,
 
 int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, int disp, uint32_t xres, uint32_t yres, float xpy)
 {
-    if (disp < 0 || disp >= MAX_DISPLAYS || !hwc_dev->displays[disp])
+    if (!is_valid_display(hwc_dev, disp))
         return -ENODEV;
 
     display_t *display = hwc_dev->displays[disp];
@@ -888,7 +888,7 @@ static int setup_mirroring(omap_hwc_device_t *hwc_dev)
     if (ext_display->transform.rotation & 1)
         SWAP(xres, yres);
 
-    if (ext_display->type == DISP_TYPE_HDMI) {
+    if (is_hdmi_display(hwc_dev, ext_disp)) {
         if (set_best_hdmi_mode(hwc_dev, ext_disp, xres, yres, hwc_dev->lcd_xpy))
             return -ENODEV;
     }
@@ -980,14 +980,13 @@ void debug_post2(omap_hwc_device_t *hwc_dev, int nbufs, int disp)
 
 static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (disp < 0 || disp >= MAX_DISPLAYS || !hwc_dev->displays[disp])
+    if (!is_valid_display(hwc_dev, disp))
         return -ENODEV;
 
-    display_t *display = hwc_dev->displays[disp];
-
-    if (display->type == DISP_TYPE_UNKNOWN || !display->contents)
+    if (!is_supported_display(hwc_dev, disp) || !is_active_display(hwc_dev, disp))
         return 0;
 
+    display_t *display = hwc_dev->displays[disp];
     hwc_display_contents_1_t *list = display->contents;
     composition_t *comp = &display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
@@ -1305,14 +1304,13 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
 static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *list,
         bool *invalidate)
 {
-    if (disp < 0 || disp >= MAX_DISPLAYS || !hwc_dev->displays[disp])
+    if (!is_valid_display(hwc_dev, disp))
         return list ? -ENODEV : 0;
 
-    display_t *display = hwc_dev->displays[disp];
-
-    if (display->type == DISP_TYPE_UNKNOWN)
+    if (!is_supported_display(hwc_dev, disp))
         return 0;
 
+    display_t *display = hwc_dev->displays[disp];
     layer_statistics_t *layer_stats = &display->layer_stats;
     composition_t *comp = &display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
@@ -1767,9 +1765,9 @@ static int hwc_eventControl(struct hwc_composer_device_1* dev,
         int val = !!enabled;
         int err;
         primary_display_t *primary = NULL;
-        if (hwc_dev->displays[HWC_DISPLAY_PRIMARY]->type == DISP_TYPE_LCD)
+        if (is_lcd_display(hwc_dev, HWC_DISPLAY_PRIMARY))
             primary = &((primary_lcd_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY])->primary;
-        else if (hwc_dev->displays[HWC_DISPLAY_PRIMARY]->type == DISP_TYPE_HDMI)
+        else if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
             primary = &((primary_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY])->primary;
         else
             return -ENODEV;
@@ -1886,9 +1884,9 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
 
     primary_display_t *primary = NULL;
     if (use_sw_vsync()) {
-        if(hwc_dev->displays[HWC_DISPLAY_PRIMARY]->type == DISP_TYPE_LCD)
+        if (is_lcd_display(hwc_dev, HWC_DISPLAY_PRIMARY))
             primary = &((primary_lcd_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY])->primary;
-        else if (hwc_dev->displays[HWC_DISPLAY_PRIMARY]->type == DISP_TYPE_HDMI)
+        else if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
             primary = &((primary_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY])->primary;
         else {
             err = -ENODEV;

@@ -167,7 +167,12 @@ int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs,
 int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t config, const uint32_t *attributes, int32_t *values);
 uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp);
 
+bool is_valid_display(omap_hwc_device_t *hwc_dev, int disp);
+bool is_supported_display(omap_hwc_device_t *hwc_dev, int disp);
+bool is_active_display(omap_hwc_device_t *hwc_dev, int disp);
+bool is_lcd_display(omap_hwc_device_t *hwc_dev, int disp);
 bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp);
+
 bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp);
 
 int blank_display(omap_hwc_device_t *hwc_dev, int disp);
