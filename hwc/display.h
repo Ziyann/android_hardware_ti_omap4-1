@@ -98,6 +98,8 @@ struct display {
     uint32_t type;
     uint32_t role;
 
+    uint32_t mgr_ix;
+
     hwc_display_contents_1_t *contents;
     layer_statistics_t layer_stats;
     composition_t composition;
@@ -160,12 +162,13 @@ struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev
 void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
 void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
 
+int get_external_display_id(omap_hwc_device_t *hwc_dev);
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs);
 int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t config, const uint32_t *attributes, int32_t *values);
 uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp);
 
 bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp);
-bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev);
+bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp);
 
 int blank_display(omap_hwc_device_t *hwc_dev, int disp);
 int unblank_display(omap_hwc_device_t *hwc_dev, int disp);
