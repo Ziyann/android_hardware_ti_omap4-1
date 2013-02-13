@@ -535,7 +535,7 @@ int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs,
     if (*numConfigs == 0)
         return 0;
 
-    if (!configs || disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
+    if (!configs || !is_valid_display(hwc_dev, disp))
         return -EINVAL;
 
     display_t *display = hwc_dev->displays[disp];
@@ -558,7 +558,7 @@ int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t cfg, c
     if (!attributes || !values)
         return 0;
 
-    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
+    if (!is_valid_display(hwc_dev, disp))
         return -EINVAL;
 
     display_t *display = hwc_dev->displays[disp];
@@ -611,7 +611,7 @@ static int get_layer_stack(omap_hwc_device_t *hwc_dev, int disp, uint32_t *stack
 
 uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
+    if (!is_valid_display(hwc_dev, disp))
         return DISP_MODE_INVALID;
 
     if (disp == HWC_DISPLAY_PRIMARY)
@@ -645,22 +645,39 @@ uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
     return DISP_MODE_LEGACY;
 }
 
-bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
+bool is_valid_display(omap_hwc_device_t *hwc_dev, int disp)
 {
     if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
         return false;
 
-    return hwc_dev->displays[disp]->type == DISP_TYPE_HDMI;
+    return true;
+}
+
+bool is_supported_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    return is_valid_display(hwc_dev, disp) && hwc_dev->displays[disp]->type != DISP_TYPE_UNKNOWN;
+}
+
+bool is_active_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    return is_valid_display(hwc_dev, disp) && hwc_dev->displays[disp]->contents;
+}
+
+bool is_lcd_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    return is_valid_display(hwc_dev, disp) && hwc_dev->displays[disp]->type == DISP_TYPE_LCD;
+}
+
+bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    return is_valid_display(hwc_dev, disp) && hwc_dev->displays[disp]->type == DISP_TYPE_HDMI;
 }
 
 bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
-        return false;
-
     external_display_t *ext = NULL;
-    if (hwc_dev->displays[disp]->type == DISP_TYPE_HDMI)
-        ext = &((external_hdmi_display_t*) hwc_dev->displays[disp])->ext;
+    if (is_hdmi_display(hwc_dev, disp))
+        ext = &((external_hdmi_display_t*)hwc_dev->displays[disp])->ext;
 
     if (ext && ext->is_mirroring)
         return true;
@@ -670,7 +687,7 @@ bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp)
 
 int blank_display(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
+    if (!is_valid_display(hwc_dev, disp))
         return -EINVAL;
 
     int err = 0;
@@ -696,7 +713,7 @@ int blank_display(omap_hwc_device_t *hwc_dev, int disp)
 
 int unblank_display(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
+    if (!is_valid_display(hwc_dev, disp))
         return -EINVAL;
 
     int err = 0;
