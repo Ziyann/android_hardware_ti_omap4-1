@@ -1135,11 +1135,6 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
         dump_dsscomp(dsscomp);
 #endif
 
-        // signal the event thread that a post has happened
-        write(hwc_dev->pipe_fds[1], "s", 1);
-        if (hwc_dev->force_sgx > 0)
-            hwc_dev->force_sgx--;
-
         comp->comp_data.blit_data.rgz_flags = comp->blitter.flags;
         comp->comp_data.blit_data.rgz_items = comp->blitter.num_blits;
         int omaplfb_comp_data_sz = sizeof(comp->comp_data) +
@@ -1188,6 +1183,12 @@ static int hwc_set(struct hwc_composer_device_1 *dev,
         if (!err && disp_err)
             err = disp_err;
     }
+
+    /* Signal the event thread that a post has happened */
+    write(hwc_dev->pipe_fds[1], "s", 1);
+
+    if (hwc_dev->force_sgx > 0)
+        hwc_dev->force_sgx--;
 
     pthread_mutex_unlock(&hwc_dev->lock);
 
