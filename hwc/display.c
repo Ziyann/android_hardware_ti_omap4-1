@@ -33,8 +33,9 @@
 
 
 #include "hwc_dev.h"
-#include "layer.h"
 #include "display.h"
+#include "layer.h"
+#include "sw_vsync.h"
 #include "utils.h"
 
 #define LCD_DISPLAY_CONFIGS 1
@@ -347,6 +348,26 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
 
     set_primary_display_transform_matrix(hwc_dev);
 
+    primary_display_t *primary = get_primary_display_info(hwc_dev);
+
+    if (!primary) {
+        remove_display(hwc_dev, HWC_DISPLAY_PRIMARY);
+        return -ENODEV;
+    }
+
+    if (use_sw_vsync()) {
+        init_sw_vsync(hwc_dev);
+        primary->use_sw_vsync = true;
+    }
+
+    if (fb_info.timings.x_res && fb_info.height_in_mm) {
+        primary->xpy = (float) fb_info.width_in_mm / fb_info.timings.x_res /
+                               fb_info.height_in_mm * fb_info.timings.y_res;
+    } else {
+        /* Use default value in case some of requested display parameters missing */
+        primary->xpy = 1.0f;
+    }
+
     return 0;
 }
 
@@ -371,6 +392,19 @@ void reset_primary_display(omap_hwc_device_t *hwc_dev)
      */
     blank_display(hwc_dev, HWC_DISPLAY_PRIMARY);
     unblank_display(hwc_dev, HWC_DISPLAY_PRIMARY);
+}
+
+primary_display_t *get_primary_display_info(omap_hwc_device_t *hwc_dev)
+{
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    primary_display_t *primary = NULL;
+
+    if (is_lcd_display(hwc_dev, HWC_DISPLAY_PRIMARY))
+        primary = &((primary_lcd_display_t*)display)->primary;
+    else if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
+        primary = &((primary_hdmi_display_t*)display)->primary;
+
+    return primary;
 }
 
 int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
