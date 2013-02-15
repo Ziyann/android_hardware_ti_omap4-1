@@ -116,20 +116,6 @@ err_out:
     return err;
 }
 
-static int get_dsscomp_display_info(omap_hwc_device_t *hwc_dev, int disp, struct dsscomp_display_info *info)
-{
-    memset(info, 0, sizeof(*info));
-    info->ix = disp;
-
-    int ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_QUERY_DISPLAY, info);
-    if (ret) {
-        ALOGE("Failed to get display info (%d): %m", errno);
-        return -errno;
-    }
-
-    return 0;
-}
-
 static int get_virtual_display_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents,
         hwc_display_info_t *info)
 {
@@ -376,9 +362,9 @@ void reset_primary_display(omap_hwc_device_t *hwc_dev)
         .num_mgrs = 1,
     };
 
-    ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_SETUP_DISPC, &d);
+    ret = ioctl(hwc_dev->dsscomp.fd, DSSCIOC_SETUP_DISPC, &d);
     if (ret)
-        ALOGW("failed to remove bootloader image");
+        ALOGW("Failed to remove bootloader image");
 
     /* Blank and unblank fd to make sure display is properly programmed on boot.
      * This is needed because the bootloader can not be trusted.
@@ -425,7 +411,7 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
      * different from that of the external display and the FB is not in TILER2D space.
      */
     external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-    if (display->transform.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
+    if (display->transform.rotation && (hwc_dev->dsscomp.limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
         ext_hdmi->ion_fd = ion_open();
         if (ext_hdmi->ion_fd >= 0) {
             allocate_tiler2d_buffers(hwc_dev, ext_hdmi);
@@ -446,7 +432,7 @@ void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev)
     }
 
     external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-    if (display->transform.rotation && (hwc_dev->platform_limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
+    if (display->transform.rotation && (hwc_dev->dsscomp.limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
         /* free tiler 2D buffer on detach */
         free_tiler2d_buffers(ext_hdmi);
 

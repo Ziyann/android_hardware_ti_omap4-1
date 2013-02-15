@@ -39,13 +39,13 @@
 
 #include "hwc_dev.h"
 #include "color_fmt.h"
+#include "blitter.h"
 #include "display.h"
+#include "dsscomp.h"
 #include "dump.h"
 #include "sw_vsync.h"
 #include "utils.h"
 
-#define MAX_HW_OVERLAYS 4
-#define NUM_NONSCALING_OVERLAYS 1
 #define ASPECT_RATIO_TOLERANCE 0.02f
 
 /* copied from: KK bionic/libc/kernel/common/linux/fb.h */
@@ -88,8 +88,6 @@ static void showfps(void)
         ALOGI("%d Frames, %f FPS", framecount, fps);
     }
 }
-
-static int sync_id = 0;
 
 static void setup_overlay(int index, uint32_t format, bool blended,
                           int width, int height, struct dss2_ovl_info *ovl)
@@ -364,49 +362,6 @@ static void adjust_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, stru
         oc->mirror = !oc->mirror;
 }
 
-bool can_scale(uint32_t src_w, uint32_t src_h, uint32_t dst_w, uint32_t dst_h, bool is_2d,
-               struct dsscomp_display_info *dis, struct dsscomp_platform_info *limits,
-               uint32_t pclk)
-{
-    uint32_t fclk = limits->fclk / 1000;
-    uint32_t min_src_w = DIV_ROUND_UP(src_w, is_2d ? limits->max_xdecim_2d : limits->max_xdecim_1d);
-    uint32_t min_src_h = DIV_ROUND_UP(src_h, is_2d ? limits->max_ydecim_2d : limits->max_ydecim_1d);
-
-    /* ERRATAs */
-    /* cannot render 1-width layers on DSI video mode panels - we just disallow all 1-width LCD layers */
-    if (dis->channel != OMAP_DSS_CHANNEL_DIGIT && dst_w < limits->min_width)
-        return false;
-
-    /* NOTE: no support for checking YUV422 layers that are tricky to scale */
-
-    /* FIXME: limit vertical downscale well below theoretical limit as we saw display artifacts */
-    if (dst_h < src_h / 4)
-        return false;
-
-    /* max downscale */
-    if (dst_h * limits->max_downscale < min_src_h)
-        return false;
-
-    /* for manual panels pclk is 0, and there are no pclk based scaling limits */
-    if (!pclk)
-        return !(dst_w < src_w / limits->max_downscale / (is_2d ? limits->max_xdecim_2d : limits->max_xdecim_1d));
-
-    /* :HACK: limit horizontal downscale well below theoretical limit as we saw display artifacts */
-    if (dst_w * 4 < src_w)
-        return false;
-
-    /* max horizontal downscale is 4, or the fclk/pixclk */
-    if (fclk > pclk * limits->max_downscale)
-        fclk = pclk * limits->max_downscale;
-    /* for small parts, we need to use integer fclk/pixclk */
-    if (src_w < limits->integer_scale_ratio_limit)
-        fclk = fclk / pclk * pclk;
-    if ((uint32_t) dst_w * fclk < min_src_w * pclk)
-        return false;
-
-    return true;
-}
-
 static uint32_t add_scaling_score(uint32_t score,
                                   uint32_t xres, uint32_t yres, uint32_t refresh,
                                   uint32_t ext_xres, uint32_t ext_yres,
@@ -451,12 +406,6 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, int disp, uint32_t xres, uint
         return -ENODEV;
 
     display_t *display = hwc_dev->displays[disp];
-
-    struct _qdis {
-        struct dsscomp_videomode modedb[MAX_DISPLAY_CONFIGS];
-        struct dsscomp_display_info dis; /* variable-sized type; should be at end of struct */
-    } d = { .dis = { .ix = display->mgr_ix } };
-
     hdmi_display_t *hdmi = NULL;
     bool avoid_mode_change = true;
 
@@ -468,36 +417,34 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, int disp, uint32_t xres, uint
     } else
         return -ENODEV;
 
-    d.dis.modedb_len = sizeof(d.modedb) / sizeof(*d.modedb);
-    int ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_QUERY_DISPLAY, &d);
-    if (ret)
-        return ret;
+    struct dsscomp_display_info *info = &display->fb_info;
+    uint32_t mode_db_len = sizeof(hdmi->mode_db) / sizeof(hdmi->mode_db[0]);
+    int err;
 
-    if (d.dis.timings.x_res * d.dis.timings.y_res == 0 ||
-        xres * yres == 0)
+    err = get_dsscomp_display_mode_db(hwc_dev, display->mgr_ix, hdmi->mode_db, &mode_db_len);
+    if (err)
+        return err;
+
+    if (info->timings.x_res * info->timings.y_res == 0 || xres * yres == 0)
         return -EINVAL;
 
     uint32_t i, best = ~0, best_score = 0;
-    hdmi->width = d.dis.width_in_mm;
-    hdmi->height = d.dis.height_in_mm;
-
     uint32_t ext_fb_xres, ext_fb_yres;
-    for (i = 0; i < d.dis.modedb_len; i++) {
-        hdmi->mode_db[i] = d.modedb[i];
 
+    for (i = 0; i < mode_db_len; i++) {
         uint32_t score = 0;
-        uint32_t mode_xres = d.modedb[i].xres;
-        uint32_t mode_yres = d.modedb[i].yres;
-        uint32_t ext_width = d.dis.width_in_mm;
-        uint32_t ext_height = d.dis.height_in_mm;
+        uint32_t mode_xres = hdmi->mode_db[i].xres;
+        uint32_t mode_yres = hdmi->mode_db[i].yres;
+        uint32_t ext_width = info->width_in_mm;
+        uint32_t ext_height = info->height_in_mm;
 
-        if (d.modedb[i].vmode & FB_VMODE_INTERLACED)
+        if (hdmi->mode_db[i].vmode & FB_VMODE_INTERLACED)
             mode_yres /= 2;
 
-        if (d.modedb[i].flag & FB_FLAG_RATIO_4_3) {
+        if (hdmi->mode_db[i].flag & FB_FLAG_RATIO_4_3) {
             ext_width = 4;
             ext_height = 3;
-        } else if (d.modedb[i].flag & FB_FLAG_RATIO_16_9) {
+        } else if (hdmi->mode_db[i].flag & FB_FLAG_RATIO_16_9) {
             ext_width = 16;
             ext_height = 9;
         }
@@ -509,24 +456,23 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, int disp, uint32_t xres, uint
                            ext_width, ext_height, &ext_fb_xres, &ext_fb_yres);
 
         /* we need to ensure that even TILER2D buffers can be scaled */
-        if (!d.modedb[i].pixclock ||
-            (d.modedb[i].vmode & ~FB_VMODE_INTERLACED) ||
-            !can_scale(xres, yres, ext_fb_xres, ext_fb_yres,
-                       1, &d.dis, &hwc_dev->platform_limits,
-                       1000000000 / d.modedb[i].pixclock))
+        if (!hdmi->mode_db[i].pixclock ||
+            (hdmi->mode_db[i].vmode & ~FB_VMODE_INTERLACED) ||
+            !can_dss_scale(hwc_dev, xres, yres, ext_fb_xres, ext_fb_yres, true,
+                           info, 1000000000 / hdmi->mode_db[i].pixclock))
             continue;
 
         /* prefer CEA modes */
-        if (d.modedb[i].flag & (FB_FLAG_RATIO_4_3 | FB_FLAG_RATIO_16_9))
+        if (hdmi->mode_db[i].flag & (FB_FLAG_RATIO_4_3 | FB_FLAG_RATIO_16_9))
             score = 1;
 
         /* prefer the same mode as we use for mirroring to avoid mode change */
         score = (score << 1) | (i == ~hdmi->current_mode && avoid_mode_change);
 
         score = add_scaling_score(score, xres, yres, 60, ext_fb_xres, ext_fb_yres,
-                                  mode_xres, mode_yres, d.modedb[i].refresh ? : 1);
+                                  mode_xres, mode_yres, hdmi->mode_db[i].refresh ? : 1);
 
-        ALOGD("#%d: %dx%d %dHz", i, mode_xres, mode_yres, d.modedb[i].refresh);
+        ALOGD("#%d: %dx%d %dHz", i, mode_xres, mode_yres, hdmi->mode_db[i].refresh);
         if (debug)
             ALOGD("  score=0x%x adj.res=%dx%d", score, ext_fb_xres, ext_fb_yres);
         if (best_score < score) {
@@ -536,29 +482,32 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, int disp, uint32_t xres, uint
             best_score = score;
         }
     }
+
     if (~best) {
-        struct dsscomp_setup_display_data sdis = { .ix = display->mgr_ix };
-        sdis.mode = d.dis.modedb[best];
         ALOGD("picking #%d", best);
         /* only reconfigure on change */
-        if (hdmi->current_mode != ~best)
-            ioctl(hwc_dev->dsscomp_fd, DSSCIOC_SETUP_DISPLAY, &sdis);
-        hdmi->current_mode = ~best;
-    } else {
-        uint32_t ext_width = d.dis.width_in_mm;
-        uint32_t ext_height = d.dis.height_in_mm;
-        uint32_t ext_fb_xres, ext_fb_yres;
+        if (hdmi->current_mode != ~best) {
+            err = setup_dsscomp_display(hwc_dev, display->mgr_ix, &hdmi->mode_db[best]);
+            if (err)
+                return err;
 
-        get_max_dimensions(xres, yres, xpy, d.dis.timings.x_res, d.dis.timings.y_res,
-                           ext_width, ext_height, &ext_fb_xres, &ext_fb_yres);
-        if (!d.dis.timings.pixel_clock ||
-            !can_scale(xres, yres, ext_fb_xres, ext_fb_yres,
-                       1, &d.dis, &hwc_dev->platform_limits,
-                       d.dis.timings.pixel_clock)) {
+            hdmi->current_mode = ~best;
+        }
+    } else {
+        hdmi->width = info->width_in_mm;
+        hdmi->height = info->height_in_mm;
+
+        get_max_dimensions(xres, yres, xpy, info->timings.x_res, info->timings.y_res,
+                           hdmi->width, hdmi->height, &ext_fb_xres, &ext_fb_yres);
+
+        if (!info->timings.pixel_clock ||
+            !can_dss_scale(hwc_dev, xres, yres, ext_fb_xres, ext_fb_yres, true,
+                           info, info->timings.pixel_clock)) {
             ALOGW("DSS scaler cannot support HDMI cloning");
             return -1;
         }
     }
+
     return 0;
 }
 
@@ -566,7 +515,7 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
 {
     display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
     uint32_t ovl_ix_base = OMAP_DSS_GFX;
-    uint32_t max_overlays = MAX_HW_OVERLAYS;
+    uint32_t max_overlays = MAX_DSS_OVERLAYS;
     uint32_t num_nonscaling_overlays = NUM_NONSCALING_OVERLAYS;
 
     /* If FB is not same resolution as LCD don't use GFX overlay. */
@@ -581,8 +530,8 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
      * have to be disabled, and the disabling has to take effect on the current display.
      * We keep track of the available number of overlays here.
      */
-    uint32_t max_primary_overlays = max_overlays - hwc_dev->last_ext_ovls;
-    uint32_t max_external_overlays = max_overlays - hwc_dev->last_int_ovls;
+    uint32_t max_primary_overlays = max_overlays - hwc_dev->dsscomp.last_ext_ovls;
+    uint32_t max_external_overlays = max_overlays - hwc_dev->dsscomp.last_int_ovls;
 
     composition_t *primary_comp = &primary_display->composition;
 
@@ -618,7 +567,7 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
     ext_comp->avail_ovls = MIN(max_external_overlays, ext_comp->wanted_ovls);
     ext_comp->scaling_ovls = ext_comp->avail_ovls;
     ext_comp->used_ovls = 0;
-    ext_comp->ovl_ix_base = MAX_HW_OVERLAYS - ext_comp->avail_ovls;
+    ext_comp->ovl_ix_base = MAX_DSS_OVERLAYS - ext_comp->avail_ovls;
 
     if (is_external_display_mirroring(hwc_dev, ext_disp)) {
         /*
@@ -630,64 +579,6 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
         if (ext_comp->avail_ovls && primary_comp->avail_ovls > ext_comp->avail_ovls)
             primary_comp->avail_ovls = MAX(min_primary_overlays, ext_comp->avail_ovls);
     }
-}
-
-static bool can_dss_render_all_for_display(omap_hwc_device_t *hwc_dev, int disp)
-{
-    int ext_disp = (disp == HWC_DISPLAY_PRIMARY) ? get_external_display_id(hwc_dev) : disp;
-    bool mirroring = is_external_display_mirroring(hwc_dev, ext_disp);
-    bool on_tv = is_hdmi_display(hwc_dev, disp);
-    if (!on_tv && mirroring) {
-        int clone = (disp == HWC_DISPLAY_PRIMARY) ? ext_disp : HWC_DISPLAY_PRIMARY;
-        on_tv = is_hdmi_display(hwc_dev, clone);
-    }
-    bool tform = mirroring && (hwc_dev->displays[ext_disp]->transform.rotation ||
-                              hwc_dev->displays[ext_disp]->transform.hflip);
-
-    layer_statistics_t *layer_stats = &hwc_dev->displays[disp]->layer_stats;
-    composition_t *comp = &hwc_dev->displays[disp]->composition;
-
-    return  !hwc_dev->force_sgx &&
-            /* must have at least one layer if using composition bypass to get sync object */
-            layer_stats->composable &&
-            layer_stats->composable <= comp->avail_ovls &&
-            layer_stats->composable == layer_stats->count &&
-            layer_stats->scaled <= comp->scaling_ovls &&
-            layer_stats->nv12 <= comp->scaling_ovls &&
-            /* fits into TILER slot */
-            layer_stats->mem1d_total <= hwc_dev->platform_limits.tiler1d_slot_size &&
-            /* we cannot clone non-NV12 transformed layers */
-            (!tform || (layer_stats->nv12 == layer_stats->composable)) &&
-            /* HDMI cannot display BGR */
-            (layer_stats->bgr == 0 || (layer_stats->rgb == 0 && !on_tv) || !hwc_dev->flags_rgb_order) &&
-            /* If nv12_only flag is set DSS should only render NV12 */
-            (!hwc_dev->flags_nv12_only || (layer_stats->bgr == 0 && layer_stats->rgb == 0));
-}
-
-static inline bool can_dss_render_layer_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_layer_1_t *layer)
-{
-    int ext_disp = (disp == HWC_DISPLAY_PRIMARY) ? get_external_display_id(hwc_dev) : disp;
-    bool mirroring = is_external_display_mirroring(hwc_dev, ext_disp);
-    bool on_tv = is_hdmi_display(hwc_dev, disp);
-    if (!on_tv && mirroring) {
-        int clone = (disp == HWC_DISPLAY_PRIMARY) ? ext_disp : HWC_DISPLAY_PRIMARY;
-        on_tv = is_hdmi_display(hwc_dev, clone);
-    }
-    bool tform = mirroring && (hwc_dev->displays[ext_disp]->transform.rotation ||
-                              hwc_dev->displays[ext_disp]->transform.hflip);
-
-    composition_t *comp = &hwc_dev->displays[disp]->composition;
-
-    return is_composable_layer(hwc_dev, disp, layer) &&
-           /* cannot rotate non-NV12 layers on external display */
-           (!tform || is_nv12_layer(layer)) &&
-           /* skip non-NV12 layers if also using SGX (if nv12_only flag is set) */
-           (!hwc_dev->flags_nv12_only || (!comp->use_sgx || is_nv12_layer(layer))) &&
-           /* make sure RGB ordering is consistent (if rgb_order flag is set) */
-           (!(comp->swap_rb ? is_rgb_layer(layer) : is_bgr_layer(layer)) ||
-            !hwc_dev->flags_rgb_order) &&
-           /* TV can only render RGB */
-           !(on_tv && is_bgr_layer(layer));
 }
 
 static inline int get_overlay_display_area(struct dss2_ovl_info const *ovl)
@@ -702,7 +593,7 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
     int ext_ovl_ix = dsscomp->num_ovls - primary_comp->used_ovls;
     struct dss2_ovl_info *o = &dsscomp->ovls[dsscomp->num_ovls];
 
-    if (dsscomp->num_ovls >= MAX_HW_OVERLAYS) {
+    if (dsscomp->num_ovls >= MAX_DSS_OVERLAYS) {
         ALOGE("**** cannot clone overlay #%d. using all %d overlays.", ix, dsscomp->num_ovls);
         return -EBUSY;
     }
@@ -710,7 +601,7 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
     memcpy(o, dsscomp->ovls + ix, sizeof(*o));
 
     /* reserve overlays at end for other display */
-    o->cfg.ix = MAX_HW_OVERLAYS - 1 - ext_ovl_ix;
+    o->cfg.ix = MAX_DSS_OVERLAYS - 1 - ext_ovl_ix;
     o->cfg.mgr_ix = hwc_dev->displays[ext_disp]->mgr_ix;
     /*
      * Here the assumption is that overlay0 is the one attached to FB.
@@ -878,12 +769,12 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         dsscomp_primary->mgrs[1] = dsscomp_primary->mgrs[0];
         dsscomp_primary->mgrs[1].ix = display->mgr_ix;
         dsscomp_primary->num_mgrs++;
-        hwc_dev->last_ext_ovls = primary_comp->used_ovls;
+        hwc_dev->dsscomp.last_ext_ovls = primary_comp->used_ovls;
         return 0;
     }
 
     memset(dsscomp, 0x0, sizeof(*dsscomp));
-    dsscomp->sync_id = sync_id++;
+    dsscomp->sync_id = hwc_dev->dsscomp.sync_id++;
 
     /*
      * The following priorities are used for different compositing HW:
@@ -901,7 +792,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         comp->use_sgx = false;
         comp->swap_rb = false;
     } else  {
-        if (can_dss_render_all_for_display(hwc_dev, disp)) {
+        if (can_dss_render_all_layers(hwc_dev, disp)) {
             /* All layers can be handled by the DSS -- don't use SGX for composition */
             comp->use_sgx = false;
             comp->swap_rb = layer_stats->bgr != 0;
@@ -936,9 +827,9 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         ovl_ix++;
     }
 
-    uint32_t tiler1d_slot_size = hwc_dev->platform_limits.tiler1d_slot_size;
+    uint32_t tiler1d_slot_size = hwc_dev->dsscomp.limits.tiler1d_slot_size;
     int ext_disp = get_external_display_id(hwc_dev);
-    if (hwc_dev->last_ext_ovls ||
+    if (hwc_dev->dsscomp.last_ext_ovls ||
             (ext_disp >= 0 && get_display_mode(hwc_dev, ext_disp) != DISP_MODE_LEGACY)) {
         tiler1d_slot_size = tiler1d_slot_size >> 1;
     }
@@ -947,7 +838,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         hwc_layer_1_t *layer = &list->hwLayers[i];
 
         if (dsscomp->num_ovls < comp->avail_ovls &&
-            can_dss_render_layer_for_display(hwc_dev, disp, layer) &&
+            can_dss_render_layer(hwc_dev, disp, layer) &&
             (!hwc_dev->force_sgx ||
             /* render protected layers via DSS */
             is_protected_layer(layer) ||
@@ -1044,9 +935,9 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 
     comp->used_ovls = dsscomp->num_ovls;
     if (disp == HWC_DISPLAY_PRIMARY)
-        hwc_dev->last_int_ovls = comp->used_ovls;
+        hwc_dev->dsscomp.last_int_ovls = comp->used_ovls;
     else
-        hwc_dev->last_ext_ovls = comp->used_ovls;
+        hwc_dev->dsscomp.last_ext_ovls = comp->used_ovls;
 
     /* Apply transform for display */
     if (display->transform.scaling)
@@ -1054,7 +945,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
             adjust_overlay_to_display(hwc_dev, disp, &dsscomp->ovls[i]);
         }
 
-    if (z != dsscomp->num_ovls || dsscomp->num_ovls > MAX_HW_OVERLAYS)
+    if (z != dsscomp->num_ovls || dsscomp->num_ovls > MAX_DSS_OVERLAYS)
         ALOGE("**** used %d z-layers for %d overlays\n", z, dsscomp->num_ovls);
 
     /* verify all z-orders and overlay indices are distinct */
@@ -1076,12 +967,12 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     dsscomp->mgrs[0].swap_rb = comp->swap_rb;
     dsscomp->num_mgrs = 1;
 
-    if (hwc_dev->last_ext_ovls && ext_disp < 0) {
+    if (hwc_dev->dsscomp.last_ext_ovls && ext_disp < 0) {
         dsscomp->mgrs[1] = dsscomp->mgrs[0];
         dsscomp->mgrs[1].ix = 1;
         dsscomp->mgrs[1].swap_rb = 0;
         dsscomp->num_mgrs++;
-        hwc_dev->last_ext_ovls = 0;
+        hwc_dev->dsscomp.last_ext_ovls = 0;
     }
 
     /*
@@ -1112,7 +1003,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         is_external_display_mirroring(hwc_dev, ext_disp)? "mirror+" : "OFF+",
         ext_disp >= 0 ? hwc_dev->displays[ext_disp]->transform.rotation * 90 : 0,
         ext_disp >= 0 ? hwc_dev->displays[ext_disp]->transform.hflip ? "+hflip" : "" : "",
-        comp->avail_ovls, comp->avail_ovls, hwc_dev->last_ext_ovls, hwc_dev->last_int_ovls);
+        comp->avail_ovls, comp->avail_ovls, hwc_dev->dsscomp.last_ext_ovls, hwc_dev->dsscomp.last_int_ovls);
     }
     return 0;
 }
@@ -1326,13 +1217,14 @@ static int hwc_device_close(hw_device_t* device)
     omap_hwc_device_t *hwc_dev = (omap_hwc_device_t *) device;;
 
     if (hwc_dev) {
-        if (hwc_dev->dsscomp_fd >= 0)
-            close(hwc_dev->dsscomp_fd);
+        close_dsscomp(hwc_dev);
+
         int i;
         for (i = 0; i < MAX_DISPLAYS; i++) {
             if (hwc_dev->fb_fd[i] >= 0)
                 close(hwc_dev->fb_fd[i]);
         }
+
         /* pthread will get killed when parent process exits */
         pthread_mutex_destroy(&hwc_dev->lock);
         free_displays(hwc_dev);
@@ -1534,7 +1426,7 @@ static void *hdmi_thread(void *data)
             if (hwc_dev->idle) {
                 if (hwc_dev->procs) {
                     pthread_mutex_lock(&hwc_dev->lock);
-                    invalidate = hwc_dev->last_int_ovls > 1 && !hwc_dev->force_sgx;
+                    invalidate = hwc_dev->dsscomp.last_int_ovls > 1 && !hwc_dev->force_sgx;
                     if (invalidate) {
                         hwc_dev->force_sgx = 2;
                     }
@@ -1706,19 +1598,9 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
 
     *device = &hwc_dev->base.common;
 
-    hwc_dev->dsscomp_fd = open("/dev/dsscomp", O_RDWR);
-    if (hwc_dev->dsscomp_fd < 0) {
-        ALOGE("failed to open dsscomp (%d)", errno);
-        err = -errno;
+    err = init_dsscomp(hwc_dev);
+    if (err)
         goto done;
-    }
-
-    int ret = ioctl(hwc_dev->dsscomp_fd, DSSCIOC_QUERY_PLATFORM, &hwc_dev->platform_limits);
-    if (ret) {
-        ALOGE("failed to get platform limits (%d): %m", errno);
-        err = -errno;
-        goto done;
-    }
 
     hwc_dev->fb_fd[HWC_DISPLAY_PRIMARY] = open("/dev/graphics/fb0", O_RDWR);
     if (hwc_dev->fb_fd[HWC_DISPLAY_PRIMARY] < 0) {
