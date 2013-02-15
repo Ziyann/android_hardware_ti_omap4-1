@@ -7,7 +7,18 @@ LOCAL_ARM_MODE := arm
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/../vendor/lib/hw
 LOCAL_SHARED_LIBRARIES := liblog libEGL libcutils libutils libhardware libhardware_legacy libz
 
-LOCAL_SRC_FILES := hwc.c rgz_2d.c sw_vsync.c display.c utils.c color_fmt.c layer.c blitter.c dump.c
+LOCAL_SRC_FILES := \
+    blitter.c \
+    color_fmt.c \
+    display.c \
+    dsscomp.c \
+    dump.c \
+    hwc.c \
+    layer.c \
+    rgz_2d.c \
+    sw_vsync.c \
+    utils.c
+
 LOCAL_CFLAGS := -DLOG_TAG=\"ti_hwc\" -Wall -Werror
 
 ifeq ($(BOARD_USE_TI_LIBION),true)

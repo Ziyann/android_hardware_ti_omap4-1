@@ -124,8 +124,10 @@ static bool can_scale_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_laye
 
     /* NOTE: layers should be able to be scaled externally since
        framebuffer is able to be scaled on selected external resolution */
-    return can_scale(src_w, src_h, dst_w, dst_h, is_nv12_layer(layer), &hwc_dev->displays[disp]->fb_info, &hwc_dev->platform_limits,
-                     hwc_dev->displays[disp]->fb_info.timings.pixel_clock);
+    struct dsscomp_display_info *fb_info = &hwc_dev->displays[disp]->fb_info;
+
+    return can_dss_scale(hwc_dev, src_w, src_h, dst_w, dst_h, is_nv12_layer(layer),
+                         fb_info, fb_info->timings.pixel_clock);
 }
 
 bool is_composable_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_layer_1_t *layer)
@@ -146,7 +148,7 @@ bool is_composable_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_layer_1
     if (!is_nv12_layer(layer)) {
         if (layer->transform)
             return false;
-        if (get_required_mem1d_size(layer) > hwc_dev->platform_limits.tiler1d_slot_size)
+        if (get_required_mem1d_size(layer) > hwc_dev->dsscomp.limits.tiler1d_slot_size)
             return false;
     }
 
