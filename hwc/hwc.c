@@ -197,7 +197,6 @@ static void set_ext_matrix(omap_hwc_device_t *hwc_dev, struct hwc_rect region)
 {
     int orig_w = WIDTH(region);
     int orig_h = HEIGHT(region);
-    float xpy = hwc_dev->lcd_xpy;
 
     /* reorientation matrix is:
        m = (center-from-target-center) * (scale-to-target) * (mirror) * (rotate) * (center-to-original-center) */
@@ -215,9 +214,15 @@ static void set_ext_matrix(omap_hwc_device_t *hwc_dev, struct hwc_rect region)
     if (transform->hflip)
         scale_matrix(transform->matrix, 1, -1, 1, 1);
 
+    primary_display_t *primary = get_primary_display_info(hwc_dev);
+    if (!primary)
+        return;
+
+    float xpy = primary->xpy;
+
     if (transform->rotation & 1) {
         SWAP(orig_w, orig_h);
-        xpy = 1. / xpy;
+        xpy = 1.0f / xpy;
     }
 
     /* get target size */
@@ -642,7 +647,8 @@ static int setup_mirroring(omap_hwc_device_t *hwc_dev)
         SWAP(xres, yres);
 
     if (is_hdmi_display(hwc_dev, ext_disp)) {
-        if (set_best_hdmi_mode(hwc_dev, ext_disp, xres, yres, hwc_dev->lcd_xpy))
+        primary_display_t *primary = get_primary_display_info(hwc_dev);
+        if (!primary || set_best_hdmi_mode(hwc_dev, ext_disp, xres, yres, primary->xpy))
             return -ENODEV;
     }
 
@@ -1275,7 +1281,8 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
         if (state) {
             uint32_t xres = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.width;
             uint32_t yres = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.height;
-            if (set_best_hdmi_mode(hwc_dev, HWC_DISPLAY_PRIMARY, xres, yres, hwc_dev->lcd_xpy)) {
+            primary_display_t *primary = get_primary_display_info(hwc_dev);
+            if (!primary || set_best_hdmi_mode(hwc_dev, HWC_DISPLAY_PRIMARY, xres, yres, primary->xpy)) {
                 ALOGE("Failed to set HDMI mode");
             }
         } else {
@@ -1503,12 +1510,9 @@ static int hwc_eventControl(struct hwc_composer_device_1* dev,
     {
         int val = !!enabled;
         int err;
-        primary_display_t *primary = NULL;
-        if (is_lcd_display(hwc_dev, HWC_DISPLAY_PRIMARY))
-            primary = &((primary_lcd_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY])->primary;
-        else if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
-            primary = &((primary_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY])->primary;
-        else
+
+        primary_display_t *primary = get_primary_display_info(hwc_dev);
+        if (!primary)
             return -ENODEV;
 
         if (primary->use_sw_vsync) {
@@ -1613,29 +1617,6 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
     if (err)
         goto done;
 
-    primary_display_t *primary = NULL;
-    if (use_sw_vsync()) {
-        if (is_lcd_display(hwc_dev, HWC_DISPLAY_PRIMARY))
-            primary = &((primary_lcd_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY])->primary;
-        else if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
-            primary = &((primary_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY])->primary;
-        else {
-            err = -ENODEV;
-            goto done;
-        }
-        primary->use_sw_vsync = true;
-        init_sw_vsync(hwc_dev);
-    }
-
-    /* use default value in case some of requested display parameters missing */
-    hwc_dev->lcd_xpy = 1.0;
-    struct dsscomp_display_info *primary_fb_info = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->fb_info;
-    if (primary_fb_info->timings.x_res && primary_fb_info->height_in_mm) {
-        hwc_dev->lcd_xpy = (float)
-            primary_fb_info->width_in_mm / primary_fb_info->timings.x_res /
-            primary_fb_info->height_in_mm * primary_fb_info->timings.y_res;
-    }
-
     if (!is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
         hwc_dev->fb_fd[HWC_DISPLAY_EXTERNAL] = open("/dev/graphics/fb1", O_RDWR);
         if (hwc_dev->fb_fd[HWC_DISPLAY_EXTERNAL] < 0) {
@@ -1646,9 +1627,9 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
     }
 
     if (pipe(hwc_dev->pipe_fds) == -1) {
-            ALOGE("failed to event pipe (%d): %m", errno);
-            err = -errno;
-            goto done;
+        ALOGE("failed to event pipe (%d): %m", errno);
+        err = -errno;
+        goto done;
     }
 
     if (pthread_mutex_init(&hwc_dev->lock, NULL)) {
@@ -1656,16 +1637,14 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
         err = -errno;
         goto done;
     }
-    if (pthread_create(&hwc_dev->hdmi_thread, NULL, hdmi_thread, hwc_dev))
-    {
+
+    if (pthread_create(&hwc_dev->hdmi_thread, NULL, hdmi_thread, hwc_dev)) {
         ALOGE("failed to create HDMI listening thread (%d): %m", errno);
         err = -errno;
         goto done;
     }
 
     /* get debug properties */
-
-    /* see if hwc is enabled at all */
     char value[PROPERTY_VALUE_MAX];
     property_get("debug.hwc.rgb_order", value, "1");
     hwc_dev->flags_rgb_order = atoi(value);

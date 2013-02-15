@@ -64,8 +64,6 @@ struct omap_hwc_device {
     blitter_config_t blitter;
 
     display_t *displays[MAX_DISPLAYS];
-
-    float lcd_xpy;                      /* pixel ratio for UI */
     bool ext_disp_state;
 
     struct dsscomp_display_info fb_dis; /* variable-sized type; should be at end of struct */

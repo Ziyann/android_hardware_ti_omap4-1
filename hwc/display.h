@@ -109,14 +109,14 @@ struct display {
 typedef struct display display_t;
 
 struct primary_display {
-    //place holder for primary display specific controls
-    //could be blitter,  vsync handling etc
     bool use_sw_vsync;
+
+    float xpy;              /* pixel ratio for UI */
 };
 typedef struct primary_display primary_display_t;
 
 struct external_display {
-    bool is_mirroring; //mirroring or distinct mode
+    bool is_mirroring;      /* mirroring or distinct mode */
 };
 typedef struct external_display external_display_t;
 
@@ -155,6 +155,7 @@ typedef struct external_hdmi_display external_hdmi_display_t;
 
 int init_primary_display(omap_hwc_device_t *hwc_dev);
 void reset_primary_display(omap_hwc_device_t *hwc_dev);
+primary_display_t *get_primary_display_info(omap_hwc_device_t *hwc_dev);
 
 int add_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev);
