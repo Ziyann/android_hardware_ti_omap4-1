@@ -62,13 +62,29 @@ void dump_display(omap_hwc_device_t *hwc_dev, dump_buf_t *log, int disp)
 {
     display_t *display = hwc_dev->displays[disp];
     display_config_t *config = &display->configs[display->active_config_ix];
+    int device_xres = config->xres;
+    int device_yres = config->yres;
 
-    dump_printf(log, "  display[%d]: %s %dx%d\n",
+    if (display->type == DISP_TYPE_LCD) {
+        device_xres = display->fb_info.timings.x_res;
+        device_yres = display->fb_info.timings.y_res;
+    } else if (display->type == DISP_TYPE_HDMI) {
+        hdmi_display_t *hdmi = (hdmi_display_t*)display;
+        device_xres = hdmi->mode_db[~hdmi->current_mode].xres;
+        device_yres = hdmi->mode_db[~hdmi->current_mode].yres;
+    }
+
+    char device_resolution[32] = {'\0'};
+    if (config->xres != device_xres || config->yres != device_yres) {
+        sprintf(device_resolution, " => %dx%d", device_xres, device_yres);
+    }
+
+    dump_printf(log, "  display[%d]: %s %dx%d%s\n",
                      disp,
                      display->type == DISP_TYPE_LCD ? "LCD" :
                      display->type == DISP_TYPE_HDMI ? "HDMI" :
                      display->type == DISP_TYPE_WFD ? "WFD" : "unknown",
-                     config->xres, config->yres);
+                     config->xres, config->yres, device_resolution);
 
     if (get_display_mode(hwc_dev, disp) == DISP_MODE_LEGACY) {
         dump_printf(log, "    legacy mode\n");
