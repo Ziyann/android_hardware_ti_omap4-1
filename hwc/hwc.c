@@ -1328,11 +1328,11 @@ static int hwc_device_close(hw_device_t* device)
     if (hwc_dev) {
         if (hwc_dev->dsscomp_fd >= 0)
             close(hwc_dev->dsscomp_fd);
-        if (hwc_dev->hdmi_fb_fd >= 0)
-            close(hwc_dev->hdmi_fb_fd);
-        if (hwc_dev->fb_fd >= 0)
-            close(hwc_dev->fb_fd);
-
+        int i;
+        for (i = 0; i < MAX_DISPLAYS; i++) {
+            if (hwc_dev->fb_fd[i] >= 0)
+                close(hwc_dev->fb_fd[i]);
+        }
         /* pthread will get killed when parent process exits */
         pthread_mutex_destroy(&hwc_dev->lock);
         free_displays(hwc_dev);
@@ -1625,7 +1625,7 @@ static int hwc_eventControl(struct hwc_composer_device_1* dev,
             return 0;
         }
 
-        err = ioctl(hwc_dev->fb_fd, OMAPFB_ENABLEVSYNC, &val);
+        err = ioctl(hwc_dev->fb_fd[HWC_DISPLAY_PRIMARY], OMAPFB_ENABLEVSYNC, &val);
         if (err < 0)
             return -errno;
 
@@ -1697,8 +1697,10 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
     hwc_dev->base.getDisplayAttributes = hwc_getDisplayAttributes;
     hwc_dev->base.query = hwc_query;
 
-    for (i = 0; i < MAX_DISPLAYS; i++)
+    for (i = 0; i < MAX_DISPLAYS; i++) {
         hwc_dev->fb_dev[i] = hwc_mod->fb_dev[i];
+        hwc_dev->fb_fd[i] = -EINVAL;
+    }
 
     *device = &hwc_dev->base.common;
 
@@ -1716,8 +1718,8 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
         goto done;
     }
 
-    hwc_dev->fb_fd = open("/dev/graphics/fb0", O_RDWR);
-    if (hwc_dev->fb_fd < 0) {
+    hwc_dev->fb_fd[HWC_DISPLAY_PRIMARY] = open("/dev/graphics/fb0", O_RDWR);
+    if (hwc_dev->fb_fd[HWC_DISPLAY_PRIMARY] < 0) {
         ALOGE("failed to open fb (%d)", errno);
         err = -errno;
         goto done;
@@ -1750,8 +1752,8 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
     }
 
     if (!is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
-        hwc_dev->hdmi_fb_fd = open("/dev/graphics/fb1", O_RDWR);
-        if (hwc_dev->hdmi_fb_fd < 0) {
+        hwc_dev->fb_fd[HWC_DISPLAY_EXTERNAL] = open("/dev/graphics/fb1", O_RDWR);
+        if (hwc_dev->fb_fd[HWC_DISPLAY_EXTERNAL] < 0) {
             ALOGE("failed to open hdmi fb (%d)", errno);
             err = -errno;
             goto done;
@@ -1813,18 +1815,8 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
     }
 
 done:
-    if (err && hwc_dev) {
-        if (hwc_dev->dsscomp_fd >= 0)
-            close(hwc_dev->dsscomp_fd);
-        if (hwc_dev->hdmi_fb_fd >= 0)
-            close(hwc_dev->hdmi_fb_fd);
-        if (hwc_dev->fb_fd >= 0)
-            close(hwc_dev->fb_fd);
-        pthread_mutex_destroy(&hwc_dev->lock);
-        free(hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition.buffers);
-        free_displays(hwc_dev);
-        free(hwc_dev);
-    }
+    if (err && hwc_dev)
+        hwc_device_close((hw_device_t*)hwc_dev);
 
     return err;
 }

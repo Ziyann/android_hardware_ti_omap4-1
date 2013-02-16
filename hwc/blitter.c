@@ -63,7 +63,7 @@ int init_blitter(omap_hwc_device_t *hwc_dev)
 
         close(gc2d_fd);
 
-        if (rgz_get_screengeometry(hwc_dev->fb_fd, &gscrngeom,
+        if (rgz_get_screengeometry(hwc_dev->fb_fd[HWC_DISPLAY_PRIMARY], &gscrngeom,
                 hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.format) != 0) {
             err = -EINVAL;
         }
