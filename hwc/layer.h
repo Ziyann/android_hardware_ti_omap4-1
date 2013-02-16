@@ -51,8 +51,8 @@ bool is_upscaled_nv12_layer(omap_hwc_device_t *hwc_dev, const hwc_layer_1_t *lay
 
 uint32_t get_required_mem1d_size(const hwc_layer_1_t *layer);
 
-bool is_valid_layer(omap_hwc_device_t *hwc_dev, const hwc_layer_1_t *layer);
+bool is_composable_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_layer_1_t *layer);
 
-void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *list, layer_statistics_t *stats);
+void gather_layer_statistics(omap_hwc_device_t *hwc_dev, int disp);
 
 #endif

@@ -18,6 +18,7 @@
 
 #include "hwc_dev.h"
 #include "color_fmt.h"
+#include "display.h"
 #include "utils.h"
 #include "layer.h"
 
@@ -104,7 +105,7 @@ uint32_t get_required_mem1d_size(const hwc_layer_1_t *layer)
     return stride * handle->iHeight;
 }
 
-static bool can_scale_layer(omap_hwc_device_t *hwc_dev, const hwc_layer_1_t *layer)
+static bool can_scale_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_layer_1_t *layer)
 {
     IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
 
@@ -123,11 +124,11 @@ static bool can_scale_layer(omap_hwc_device_t *hwc_dev, const hwc_layer_1_t *lay
 
     /* NOTE: layers should be able to be scaled externally since
        framebuffer is able to be scaled on selected external resolution */
-    return can_scale(src_w, src_h, dst_w, dst_h, is_nv12_layer(layer), &hwc_dev->fb_dis, &hwc_dev->platform_limits,
-                     hwc_dev->fb_dis.timings.pixel_clock);
+    return can_scale(src_w, src_h, dst_w, dst_h, is_nv12_layer(layer), &hwc_dev->displays[disp]->fb_info, &hwc_dev->platform_limits,
+                     hwc_dev->displays[disp]->fb_info.timings.pixel_clock);
 }
 
-bool is_valid_layer(omap_hwc_device_t *hwc_dev, const hwc_layer_1_t *layer)
+bool is_composable_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_layer_1_t *layer)
 {
     IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
 
@@ -149,12 +150,14 @@ bool is_valid_layer(omap_hwc_device_t *hwc_dev, const hwc_layer_1_t *layer)
             return false;
     }
 
-    return can_scale_layer(hwc_dev, layer);
+    return can_scale_layer(hwc_dev, disp, layer);
 }
 
-void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *list, layer_statistics_t *layer_stats)
+void gather_layer_statistics(omap_hwc_device_t *hwc_dev, int disp)
 {
     uint32_t i;
+    hwc_display_contents_1_t *list = hwc_dev->displays[disp]->contents;
+    layer_statistics_t *layer_stats = &hwc_dev->displays[disp]->layer_stats;
 
     memset(layer_stats, 0, sizeof(*layer_stats));
 
@@ -171,7 +174,7 @@ void gather_layer_statistics(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_
             layer->compositionType = HWC_FRAMEBUFFER;
         }
 
-        if (is_valid_layer(hwc_dev, layer)) {
+        if (is_composable_layer(hwc_dev, disp, layer)) {
             layer_stats->composable++;
 
             /* NV12 layers can only be rendered on scaling overlays */

@@ -678,7 +678,7 @@ static inline bool can_dss_render_layer_for_display(omap_hwc_device_t *hwc_dev, 
 
     composition_t *comp = &hwc_dev->displays[disp]->composition;
 
-    return is_valid_layer(hwc_dev, layer) &&
+    return is_composable_layer(hwc_dev, disp, layer) &&
            /* cannot rotate non-NV12 layers on external display */
            (!tform || is_nv12_layer(layer)) &&
            /* skip non-NV12 layers if also using SGX (if nv12_only flag is set) */
@@ -1404,6 +1404,7 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
         }
 
         external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*) hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+        display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
         /* check whether we can clone */
         char value[PROPERTY_VALUE_MAX];
         property_get("persist.hwc.mirroring.enabled", value, "1");
@@ -1412,7 +1413,8 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
         ext_hdmi->avoid_mode_change = atoi(value) > 0;
 
         /* get cloning transformation */
-        property_get("persist.hwc.mirroring.transform", value, hwc_dev->fb_dis.timings.y_res > hwc_dev->fb_dis.timings.x_res ? "3" : "0");
+        property_get("persist.hwc.mirroring.transform", value,
+                     primary_display->fb_info.timings.y_res > primary_display->fb_info.timings.x_res ? "3" : "0");
         ext_hdmi->hdmi.base.transform.rotation = atoi(value) & EXT_ROTATION;
         ext_hdmi->hdmi.base.transform.hflip = (atoi(value) & EXT_HFLIP) > 0;
 
@@ -1745,10 +1747,11 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
 
     /* use default value in case some of requested display parameters missing */
     hwc_dev->lcd_xpy = 1.0;
-    if (hwc_dev->fb_dis.timings.x_res && hwc_dev->fb_dis.height_in_mm) {
+    struct dsscomp_display_info *primary_fb_info = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->fb_info;
+    if (primary_fb_info->timings.x_res && primary_fb_info->height_in_mm) {
         hwc_dev->lcd_xpy = (float)
-            hwc_dev->fb_dis.width_in_mm / hwc_dev->fb_dis.timings.x_res /
-            hwc_dev->fb_dis.height_in_mm * hwc_dev->fb_dis.timings.y_res;
+            primary_fb_info->width_in_mm / primary_fb_info->timings.x_res /
+            primary_fb_info->height_in_mm * primary_fb_info->timings.y_res;
     }
 
     if (!is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
