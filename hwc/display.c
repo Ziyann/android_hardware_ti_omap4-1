@@ -183,7 +183,7 @@ static void setup_wfd_config(display_config_t *config, hwc_display_info_t *info)
     config->ydpi = WFD_DISPLAY_DEFAULT_DPI;
 }
 
-static int init_primary_lcd_display(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres)
+static int init_primary_lcd_display(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres, struct dsscomp_display_info *info)
 {
     int err;
 
@@ -193,14 +193,14 @@ static int init_primary_lcd_display(omap_hwc_device_t *hwc_dev, uint32_t xres, u
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
 
-    setup_lcd_config(&display->configs[0], xres, yres, &hwc_dev->fb_dis);
+    setup_lcd_config(&display->configs[0], xres, yres, info);
 
     display->type = DISP_TYPE_LCD;
 
     return 0;
 }
 
-static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres)
+static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres, struct dsscomp_display_info *info)
 {
     int err;
 
@@ -210,7 +210,7 @@ static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev, uint32_t xres, 
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
 
-    setup_hdmi_config(&display->configs[0], xres, yres, &hwc_dev->fb_dis);
+    setup_hdmi_config(&display->configs[0], xres, yres, info);
 
     display->type = DISP_TYPE_HDMI;
 
@@ -219,15 +219,15 @@ static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev, uint32_t xres, 
 
 static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
 {
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+
     /* Create primary display translation matrix */
-    int lcd_w = hwc_dev->fb_dis.timings.x_res;
-    int lcd_h = hwc_dev->fb_dis.timings.y_res;
+    int lcd_w = display->fb_info.timings.x_res;
+    int lcd_h = display->fb_info.timings.y_res;
     IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
     int orig_w = fb_dev->base.width;
     int orig_h = fb_dev->base.height;
     hwc_rect_t region = {.left = 0, .top = 0, .right = orig_w, .bottom = orig_h};
-
-    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
 
     display->transform.region = region;
     display->transform.rotation= ((lcd_w > lcd_h) ^ (orig_w > orig_h)) ? 1 : 0;
@@ -331,21 +331,21 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
     }
 
     int err;
-
-    err = get_dsscomp_display_info(hwc_dev, HWC_DISPLAY_PRIMARY, &hwc_dev->fb_dis);
+    struct dsscomp_display_info fb_info;
+    err = get_dsscomp_display_info(hwc_dev, HWC_DISPLAY_PRIMARY, &fb_info);
     if (err)
-        return -ENODEV;
+        return err;
 
     IMG_framebuffer_device_public_t *fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
     uint32_t xres = fb_dev->base.width;
     uint32_t yres = fb_dev->base.height;
 
-    switch (hwc_dev->fb_dis.channel) {
+    switch (fb_info.channel) {
         case OMAP_DSS_CHANNEL_LCD:
-            err = init_primary_lcd_display(hwc_dev, xres, yres);
+            err = init_primary_lcd_display(hwc_dev, xres, yres, &fb_info);
             break;
         case OMAP_DSS_CHANNEL_DIGIT:
-            err = init_primary_hdmi_display(hwc_dev, xres, yres);
+            err = init_primary_hdmi_display(hwc_dev, xres, yres, &fb_info);
             break;
         default:
             return -ENODEV;
@@ -355,6 +355,7 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
         return -ENODEV;
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    display->fb_info = fb_info;
     display->role = DISP_ROLE_PRIMARY;
     display->mgr_ix = 0;
 
@@ -395,7 +396,6 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
 
     int err;
     struct dsscomp_display_info info;
-
     err = get_dsscomp_display_info(hwc_dev, HWC_DISPLAY_EXTERNAL, &info);
     if (err)
         return err;
@@ -405,7 +405,9 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
         return err;
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+
     display_config_t *config = &display->configs[0];
+    display->fb_info = info;
     display->type = DISP_TYPE_HDMI;
     display->role = DISP_ROLE_EXTERNAL;
     display->mgr_ix = 1;
@@ -417,7 +419,7 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
     // TODO: Verify that HDMI supports xres x yres
     // TODO: Set HDMI resolution? What if we need to do docking of 1080p i.s.o. Presentation?
 
-    setup_hdmi_config(config, xres, yres, &info);
+    setup_hdmi_config(config, xres, yres, &display->fb_info);
 
     /* Allocate backup buffers for FB rotation. This is required only if the FB tranform is
      * different from that of the external display and the FB is not in TILER2D space.
@@ -502,7 +504,7 @@ void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_d
             display_t *display = hwc_dev->displays[i];
             display->contents = displays[i];
 
-            gather_layer_statistics(hwc_dev, display->contents, &display->layer_stats);
+            gather_layer_statistics(hwc_dev, i);
         }
     }
 
