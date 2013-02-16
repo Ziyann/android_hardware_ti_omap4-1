@@ -687,24 +687,10 @@ bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp)
 
 int blank_display(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (!is_valid_display(hwc_dev, disp))
+    if (!is_valid_display(hwc_dev, disp) || hwc_dev->fb_fd[disp] < 0)
         return -EINVAL;
 
-    int err = 0;
-
-    switch (disp) {
-    case HWC_DISPLAY_PRIMARY:
-        err = ioctl(hwc_dev->fb_fd, FBIOBLANK, FB_BLANK_POWERDOWN);
-        break;
-    case HWC_DISPLAY_EXTERNAL:
-        if (is_hdmi_display(hwc_dev, disp))
-            err = ioctl(hwc_dev->hdmi_fb_fd, FBIOBLANK, FB_BLANK_POWERDOWN);
-        break;
-    default:
-        err = -EINVAL;
-        break;
-    }
-
+    int err = ioctl(hwc_dev->fb_fd[disp], FBIOBLANK, FB_BLANK_POWERDOWN);
     if (err)
         ALOGW("Failed to blank display %d (%d)", disp, err);
 
@@ -713,24 +699,10 @@ int blank_display(omap_hwc_device_t *hwc_dev, int disp)
 
 int unblank_display(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (!is_valid_display(hwc_dev, disp))
+    if (!is_valid_display(hwc_dev, disp) || hwc_dev->fb_fd[disp] < 0)
         return -EINVAL;
 
-    int err = 0;
-
-    switch (disp) {
-    case HWC_DISPLAY_PRIMARY:
-        err = ioctl(hwc_dev->fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
-        break;
-    case HWC_DISPLAY_EXTERNAL:
-        if (is_hdmi_display(hwc_dev, disp))
-            err = ioctl(hwc_dev->hdmi_fb_fd, FBIOBLANK, FB_BLANK_UNBLANK);
-        break;
-    default:
-        err = -EINVAL;
-        break;
-    }
-
+    int err = ioctl(hwc_dev->fb_fd[disp], FBIOBLANK, FB_BLANK_UNBLANK);
     if (err)
         ALOGW("Failed to unblank display %d (%d)", disp, err);
 
