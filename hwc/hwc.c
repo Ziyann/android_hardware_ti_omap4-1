@@ -63,7 +63,7 @@ enum {
 };
 
 static bool debug = false;
-static bool debugpost2 = false;
+static bool debug_post2 = false;
 
 static void showfps(void)
 {
@@ -722,21 +722,6 @@ static void check_sync_fds_for_display(int disp, hwc_display_contents_1_t *list)
     }
 }
 
-void debug_post2(omap_hwc_device_t *hwc_dev, int nbufs, int disp)
-{
-    if (!debugpost2)
-        return;
-
-    struct dsscomp_setup_dispc_data *dsscomp = &hwc_dev->displays[disp]->composition.comp_data.dsscomp_data;
-    int i;
-    for (i=0; i<nbufs; i++) {
-        ALOGI("buf[%d] hndl %p", i, hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition.buffers[i]);
-    }
-    for (i=0; i < dsscomp->num_ovls; i++) {
-        ALOGI("ovl[%d] ba %d", i, dsscomp->ovls[i].ba);
-    }
-}
-
 static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 {
     if (!is_valid_display(hwc_dev, disp))
@@ -1098,7 +1083,7 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
     }
 
     if (debug)
-        dump_set_info(hwc_dev, list, disp);
+        dump_set_info(hwc_dev, disp, list);
 
     int err = 0;
 
@@ -1145,7 +1130,9 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
         ALOGI_IF(blitter->debug, "Post2, blits %d, ovl_buffers %d, blit_buffers %d sgx %d",
             comp->blitter.num_blits, comp->num_buffers, comp->blitter.num_buffers, comp->use_sgx);
 
-        debug_post2(hwc_dev, num_buffers, disp);
+        if (debug_post2)
+            dump_post2(hwc_dev, disp);
+
         err = hwc_dev->fb_dev[disp]->Post2((framebuffer_device_t *)hwc_dev->fb_dev[disp],
                              comp->buffers, num_buffers,
                              dsscomp, omaplfb_comp_data_sz);

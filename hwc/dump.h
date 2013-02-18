@@ -35,7 +35,8 @@ void dump_display(omap_hwc_device_t *hwc_dev, dump_buf_t *log, int disp);
 
 /* Internal debug */
 void dump_layer(const hwc_layer_1_t *l);
-void dump_set_info(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *list, int disp);
+void dump_set_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *list);
 void dump_dsscomp(struct dsscomp_setup_dispc_data *d);
+void dump_post2(omap_hwc_device_t *hwc_dev, int disp);
 
 #endif

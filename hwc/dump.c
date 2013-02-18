@@ -117,7 +117,7 @@ void dump_layer(const hwc_layer_1_t *l)
          l->displayFrame.left, l->displayFrame.top, l->displayFrame.right, l->displayFrame.bottom);
 }
 
-void dump_set_info(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *list, int disp)
+void dump_set_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *list)
 {
     composition_t *comp = &hwc_dev->displays[disp]->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
@@ -241,5 +241,43 @@ void dump_dsscomp(struct dsscomp_setup_dispc_data *d)
                  c->rotation, c->mirror ? "+mir" : "",
                  c->win.x, c->win.y, c->win.w, c->win.h,
                  (void *) oi->ba, (void *) oi->uv, c->stride);
+    }
+}
+
+void dump_post2(omap_hwc_device_t *hwc_dev, int disp)
+{
+    composition_t *comp = &hwc_dev->displays[disp]->composition;
+    struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    uint32_t num_buffers = comp->num_buffers + comp->blitter.num_buffers;
+    uint32_t i;
+
+    for (i = 0; i < num_buffers; i++) {
+        ALOGI("buf[%d] hndl %p => %s", i, comp->buffers[i], i < comp->num_buffers ? "dss" : "blt");
+    }
+
+    for (i = 0; i < dsscomp->num_ovls; i++) {
+        char ba[32];
+        switch (dsscomp->ovls[i].addressing) {
+        case OMAP_DSS_BUFADDR_LAYER_IX:
+            if (comp->blitter.num_buffers)
+                if (i == 0)
+                    sprintf(ba, "bltfb");
+                else
+                    sprintf(ba, "buf%d", dsscomp->ovls[i].ba - 1);
+            else
+                sprintf(ba, "buf%d", dsscomp->ovls[i].ba);
+            break;
+        case OMAP_DSS_BUFADDR_OVL_IX:
+            sprintf(ba, "ovl%d", dsscomp->ovls[i].ba);
+            break;
+        case OMAP_DSS_BUFADDR_ION:
+            sprintf(ba, "%p", (void *)dsscomp->ovls[i].ba);
+            break;
+        default:
+            sprintf(ba, "%d", dsscomp->ovls[i].ba);
+            break;
+        }
+
+        ALOGI("ovl[%d] ba %s", i, ba);
     }
 }
