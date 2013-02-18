@@ -5,7 +5,8 @@ LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
 LOCAL_ARM_MODE := arm
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/../vendor/lib/hw
-LOCAL_SHARED_LIBRARIES := liblog libEGL libcutils libutils libhardware libhardware_legacy libz
+LOCAL_SHARED_LIBRARIES := liblog libEGL libcutils libutils libhardware libhardware_legacy libz \
+                          libedid libdsswbhal
 
 LOCAL_SRC_FILES := \
     blitter.c \
@@ -47,8 +48,8 @@ LOCAL_C_INCLUDES += external/libpng external/zlib
 
 LOCAL_C_INCLUDES += \
     $(LOCAL_PATH)/../edid/inc \
-    $(LOCAL_PATH)/../include
-LOCAL_SHARED_LIBRARIES += libedid
+    $(LOCAL_PATH)/../include \
+    $(LOCAL_PATH)/../libdsswb
 
 # LOG_NDEBUG=0 means verbose logging enabled
 # LOCAL_CFLAGS += -DLOG_NDEBUG=0

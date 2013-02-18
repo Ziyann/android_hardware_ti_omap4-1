@@ -18,7 +18,10 @@
 #define LOG_TAG "DSSWBHal"
 #include <utils/Log.h>
 
+#include <fcntl.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
+#include <video/dsscomp.h>
 #include <string.h>
 
 #include <cutils/atomic.h>
@@ -54,6 +57,13 @@ status_t DSSWBHal::initialize() {
     err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID, (const hw_module_t**)&mGrallocModule);
     if (err) {
         ALOGE("unable to open gralloc module %d", err);
+        return err;
+    }
+
+    mDssCompFd = open("/dev/dsscomp", O_RDWR);
+    if (mDssCompFd < 0) {
+        ALOGE("failed to open dsscomp (%d)", errno);
+        err = -errno;
         return err;
     }
 
@@ -114,11 +124,12 @@ buffer_handle_t DSSWBHal::processQueue() {
     return mBufferSlots[bufIndex].handle;
 }
 
-void DSSWBHal::captureStarted(buffer_handle_t handle) {
+void DSSWBHal::captureStarted(buffer_handle_t handle, int syncId) {
     AutoMutex lock(mLock);
     for (List<int>::iterator it = mWritebackList.begin(); it != mWritebackList.end(); ++it) {
         if (mBufferSlots[*it].handle == handle) {
             // move this buffer from writeback to dequeue list and signal dequeue
+            mBufferSlots.editItemAt(*it).syncId = syncId;
             mDequeueList.push_back(*it);
             mWritebackList.erase(it);
             mDequeueCondition.signal();
@@ -266,6 +277,10 @@ status_t DSSWBHal::dequeue(int wbHandle, int *bufIndex) {
     it = mDequeueList.begin();
     *bufIndex = *it;
 
+    if (ioctl(mDssCompFd, DSSCIOC_WB_DONE, &mBufferSlots[*bufIndex].syncId)) {
+        ALOGW("timed out waiting for WB operation to complete");
+    }
+
     mDequeueList.erase(it);
     mBufferSlots.editItemAt(*bufIndex).state = BufferSlot::DEQUEUED;
     ALOGV("WBHal::dequeue index %d status %d", *bufIndex, BufferSlot::DEQUEUED);
@@ -390,8 +405,8 @@ int wb_capture_layer(hwc_layer_1_t *wb_layer) {
     return 1;
 }
 
-void wb_capture_started(buffer_handle_t handle) {
-    gDSSWBHal->captureStarted(handle);
+void wb_capture_started(buffer_handle_t handle, int sync_id) {
+    gDSSWBHal->captureStarted(handle, sync_id);
 }
 
 int wb_capture_pending() {

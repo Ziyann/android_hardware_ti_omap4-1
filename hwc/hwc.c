@@ -35,6 +35,7 @@
 #include <utils/Timers.h>
 #include <EGL/egl.h>
 #include <edid_parser.h>
+#include <DSSWBHal.h>
 #include <linux/omapfb.h>
 
 #include "hwc_dev.h"
@@ -543,6 +544,16 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
     if (ext_disp < 0)
         return;
 
+    display_t *ext_display = hwc_dev->displays[ext_disp];
+
+    if (is_wfd_display(hwc_dev, ext_disp)) {
+        // TODO: check if we have the same aspect ratio on LCD and WFD here
+        wfd_display_t *wfd = (wfd_display_t *)ext_display;
+        wfd->wb_mode = OMAP_WB_CAPTURE_MODE;
+
+        return;
+    }
+
     /*
      * For primary display we must reserve at least one overlay for FB, plus an extra
      * overlay for each protected layer.
@@ -559,7 +570,7 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
      * may not do external composition for the first frame while the overlays required for
      * it are cleared.
      */
-    composition_t *ext_comp = &hwc_dev->displays[ext_disp]->composition;
+    composition_t *ext_comp = &ext_display->composition;
 
     ext_comp->wanted_ovls = max_overlays - primary_comp->wanted_ovls;
     ext_comp->avail_ovls = MIN(max_external_overlays, ext_comp->wanted_ovls);
@@ -722,6 +733,74 @@ static void check_sync_fds_for_display(int disp, hwc_display_contents_1_t *list)
     }
 }
 
+static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
+{
+    wfd_display_t *wfd = (wfd_display_t *)hwc_dev->displays[disp];
+    // TODO: Only legacy mode is supported for now -- use primary composition
+    composition_t *comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
+    struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+
+    wfd->use_wb = wb_capture_layer(&wfd->wb_layer);
+    if (wfd->use_wb) {
+        ALOGV("setup_wb_capture: layer is captured, handle = %p", wfd->wb_layer.handle);
+        comp->buffers[comp->num_buffers] = wfd->wb_layer.handle;
+
+        struct dss2_ovl_info *oi = &dsscomp->ovls[dsscomp->num_ovls];
+
+        adjust_overlay_to_layer(hwc_dev, oi, &wfd->wb_layer, 0); /* z-order doesn't matter for WB */
+
+        oi->cfg.ix = OMAP_DSS_WB;
+        oi->addressing = OMAP_DSS_BUFADDR_LAYER_IX;
+        oi->ba = comp->num_buffers;
+        oi->cfg.wb_source = OMAP_WB_LCD1;
+        oi->cfg.wb_mode = wfd->wb_mode;
+
+        dsscomp->num_ovls++;
+        dsscomp->mode = DSSCOMP_SETUP_DISPLAY_CAPTURE;
+        comp->num_buffers++;
+
+        wfd->wb_sync_id = dsscomp->sync_id;
+    }
+}
+
+static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
+{
+    display_t *display = hwc_dev->displays[disp];
+    wfd_display_t *wfd = is_wfd_display(hwc_dev, disp) ? (wfd_display_t*)display : NULL;
+    hwc_display_contents_1_t *list = display->contents;
+
+    /* Mirror the layers using primary display composition */
+    composition_t *comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
+    struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    uint32_t i, ix;
+
+    /* Prevent SurfaceFlinger composition for external display */
+    for (i = 0; i < list->numHwLayers; i++) {
+        hwc_layer_1_t *layer = &list->hwLayers[i];
+        if (layer->compositionType == HWC_FRAMEBUFFER_TARGET)
+            continue;
+
+        layer->compositionType = HWC_OVERLAY;
+    }
+
+    if (wfd && wfd->wb_mode == OMAP_WB_CAPTURE_MODE) {
+        setup_wb_capture(hwc_dev, disp);
+        return;
+    }
+
+    /* Mirror all layers */
+    for (ix = 0; ix < comp->used_ovls; ix++) {
+        if (clone_overlay(hwc_dev, ix, disp))
+            break;
+    }
+
+    dsscomp->mgrs[1] = dsscomp->mgrs[0];
+    dsscomp->mgrs[1].ix = display->mgr_ix;
+    dsscomp->num_mgrs++;
+
+    hwc_dev->dsscomp.last_ext_ovls = ix;
+}
+
 static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 {
     if (!is_valid_display(hwc_dev, disp))
@@ -757,29 +836,8 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     }
 
     if (is_external_display_mirroring(hwc_dev, disp)) {
-        /* mirror the layers from primary display composition */
-        composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
-        struct dsscomp_setup_dispc_data *dsscomp_primary = &primary_comp->comp_data.dsscomp_data;
-        uint32_t i, ix;
+        mirror_primary_composition(hwc_dev, disp);
 
-        /* mirror all layers */
-        for (ix = 0; ix < primary_comp->used_ovls; ix++) {
-            if (clone_overlay(hwc_dev, ix, disp))
-                break;
-        }
-
-        for (i = 0; i < list->numHwLayers; i++) {
-            hwc_layer_1_t *layer = &list->hwLayers[i];
-            if (layer->compositionType == HWC_FRAMEBUFFER_TARGET)
-                continue;
-
-            layer->compositionType = HWC_OVERLAY;
-        }
-
-        dsscomp_primary->mgrs[1] = dsscomp_primary->mgrs[0];
-        dsscomp_primary->mgrs[1].ix = display->mgr_ix;
-        dsscomp_primary->num_mgrs++;
-        hwc_dev->dsscomp.last_ext_ovls = primary_comp->used_ovls;
         return 0;
     }
 
@@ -1136,6 +1194,20 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
                              dsscomp, omaplfb_comp_data_sz);
 
         showfps();
+
+        int ext_disp = get_external_display_id(hwc_dev);
+
+        if (is_wfd_display(hwc_dev, ext_disp)) {
+            display_t *ext_display = hwc_dev->displays[ext_disp];
+            if (disp == ext_disp || (disp == HWC_DISPLAY_PRIMARY && ext_display->mode == DISP_MODE_LEGACY)) {
+                wfd_display_t *wfd = (wfd_display_t*)ext_display;
+
+                if (wfd->use_wb) {
+                    ALOGV("wb capture started, handle = %p, sync_id = %d", wfd->wb_layer.handle, wfd->wb_sync_id);
+                    wb_capture_started(wfd->wb_layer.handle, wfd->wb_sync_id);
+                }
+            }
+        }
     }
 
     if (err)
@@ -1630,6 +1702,10 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
         hwc_dev->flags_rgb_order, hwc_dev->flags_nv12_only);
 
     err = init_blitter(hwc_dev);
+    if (err)
+        goto done;
+
+    err = wb_open();
     if (err)
         goto done;
 

@@ -23,6 +23,7 @@
 
 #include <cutils/log.h>
 #include <cutils/properties.h>
+#include <DSSWBHal.h>
 
 #include <linux/fb.h>
 #include <video/dsscomp.h>
@@ -294,7 +295,7 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
     if (err)
         return err;
 
-    err = allocate_display(sizeof(display_t), WFD_DISPLAY_CONFIGS, &hwc_dev->displays[disp]);
+    err = allocate_display(sizeof(external_wfd_display_t), WFD_DISPLAY_CONFIGS, &hwc_dev->displays[disp]);
     if (err)
         return err;
 
@@ -305,9 +306,6 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
     display->type = DISP_TYPE_WFD;
     display->role = DISP_ROLE_EXTERNAL;
     display->mgr_ix = 1;
-
-    // HACK: disable WFD display while WB is not fully functional
-    display->type = DISP_TYPE_UNKNOWN;
 
     return 0;
 }
@@ -538,6 +536,8 @@ external_display_t *get_external_display_info(omap_hwc_device_t *hwc_dev, int di
 
     if (is_hdmi_display(hwc_dev, disp))
         ext = &((external_hdmi_display_t*)display)->ext;
+    else if (is_wfd_display(hwc_dev, disp))
+        ext = &((external_wfd_display_t*)display)->ext;
 
     return ext;
 }
@@ -593,6 +593,10 @@ static uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
 
     if (!display->contents)
         return DISP_MODE_INVALID;
+
+    // HACK: force WFD to legacy mirroring mode until WB M2M is operational
+    if (display->type == DISP_TYPE_WFD)
+        return DISP_MODE_LEGACY;
 
     if (!(display->contents->flags & HWC_EXTENDED_API) || !hwc_dev->procs || !hwc_dev->procs->extension_cb)
         return DISP_MODE_LEGACY;
@@ -748,6 +752,11 @@ bool is_lcd_display(omap_hwc_device_t *hwc_dev, int disp)
 bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
 {
     return is_valid_display(hwc_dev, disp) && hwc_dev->displays[disp]->type == DISP_TYPE_HDMI;
+}
+
+bool is_wfd_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    return is_valid_display(hwc_dev, disp) && hwc_dev->displays[disp]->type == DISP_TYPE_WFD;
 }
 
 bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp)

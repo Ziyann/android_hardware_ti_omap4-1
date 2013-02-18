@@ -43,7 +43,7 @@ public:
     static status_t instantiate();
 
     buffer_handle_t processQueue();
-    void captureStarted(buffer_handle_t handle);
+    void captureStarted(buffer_handle_t handle, int syncId);
     bool capturePending();
     void getConfig(wb_capture_config_t *config);
 
@@ -57,6 +57,7 @@ public:
     virtual status_t cancelBuffer(int wbHandle, int *bufIndex);
     virtual status_t setConfig(int wbHandle, const wb_capture_config_t &config);
     virtual status_t getConfig(int wbHandle, wb_capture_config_t *config);
+
 
 private:
 
@@ -75,6 +76,7 @@ private:
 
         BufferState state;
         native_handle_t *handle;
+        int syncId;
     };
 
     void getConfigLocked(wb_capture_config_t *config);
@@ -94,6 +96,8 @@ private:
     mutable Condition mDequeueCondition;
 
     gralloc_module_t *mGrallocModule;
+
+    int mDssCompFd;
 };
 
 /* the declaration of functions being used from hwc.c need to be
@@ -104,7 +108,7 @@ private:
  */
 extern "C" int wb_open();
 extern "C" int wb_capture_layer(hwc_layer_1_t *wb_layer);
-extern "C" void wb_capture_started(buffer_handle_t handle);
+extern "C" void wb_capture_started(buffer_handle_t handle, int sync_id);
 extern "C" int wb_capture_pending();
 };
 #else
@@ -112,7 +116,7 @@ extern "C" int wb_capture_pending();
 
 extern int wb_open();
 extern int wb_capture_layer(hwc_layer_1_t *wb_layer);
-extern void wb_capture_started(buffer_handle_t handle);
+extern void wb_capture_started(buffer_handle_t handle, int sync_id);
 extern int wb_capture_pending();
 #endif // __cplusplus
 
