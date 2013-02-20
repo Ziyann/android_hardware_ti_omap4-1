@@ -21,6 +21,7 @@
 #include <sys/ioctl.h>
 
 #include <cutils/log.h>
+#include <cutils/properties.h>
 
 #include <linux/fb.h>
 #include <video/dsscomp.h>
@@ -367,6 +368,22 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
         /* Use default value in case some of requested display parameters missing */
         primary->xpy = 1.0f;
     }
+
+    /* get the board specific clone properties */
+    /* eg: 0:0:1280:720 */
+    char value[PROPERTY_VALUE_MAX];
+    if (property_get("persist.hwc.mirroring.region", value, "") <= 0 ||
+        sscanf(value, "%d:%d:%d:%d",
+           &primary->mirroring_region.left, &primary->mirroring_region.top,
+           &primary->mirroring_region.right, &primary->mirroring_region.bottom) != 4 ||
+           primary->mirroring_region.left >= primary->mirroring_region.right ||
+           primary->mirroring_region.top >= primary->mirroring_region.bottom) {
+        struct hwc_rect fb_region = { .right = xres, .bottom = yres };
+        primary->mirroring_region = fb_region;
+    }
+    ALOGI("clone region is set to (%d,%d) to (%d,%d)",
+            primary->mirroring_region.left, primary->mirroring_region.top,
+            primary->mirroring_region.right, primary->mirroring_region.bottom);
 
     return 0;
 }
