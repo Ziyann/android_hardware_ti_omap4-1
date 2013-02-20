@@ -111,7 +111,8 @@ typedef struct display display_t;
 struct primary_display {
     bool use_sw_vsync;
 
-    float xpy;              /* pixel ratio for UI */
+    float xpy;                      /* pixel ratio for UI */
+    hwc_rect_t mirroring_region;    /* region to mirror */
 };
 typedef struct primary_display primary_display_t;
 

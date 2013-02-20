@@ -352,7 +352,6 @@ static void adjust_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, stru
     if (!display)
         return;
 
-    /* crop to clone region if mirroring */
     if (crop_overlay_to_rect(display->transform.region, ovl) != 0) {
         oc->enabled = 0;
         return;
@@ -1292,6 +1291,13 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
 
         external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*) hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
         display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+        primary_display_t *primary = get_primary_display_info(hwc_dev);
+
+        if (!(primary && primary_display && ext_hdmi)) {
+            pthread_mutex_unlock(&hwc_dev->lock);
+            return;
+        }
+
         /* check whether we can clone */
         char value[PROPERTY_VALUE_MAX];
         property_get("persist.hwc.mirroring.enabled", value, "1");
@@ -1305,24 +1311,9 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
         ext_hdmi->hdmi.base.transform.rotation = atoi(value) & EXT_ROTATION;
         ext_hdmi->hdmi.base.transform.hflip = (atoi(value) & EXT_HFLIP) > 0;
 
-        /* get the board specific clone properties */
-        /* 0:0:1280:720 */
-        if (property_get("persist.hwc.mirroring.region", value, "") <= 0 ||
-            sscanf(value, "%d:%d:%d:%d",
-               &ext_hdmi->hdmi.base.transform.region.left, &ext_hdmi->hdmi.base.transform.region.top,
-               &ext_hdmi->hdmi.base.transform.region.right, &ext_hdmi->hdmi.base.transform.region.bottom) != 4 ||
-               ext_hdmi->hdmi.base.transform.region.left >= ext_hdmi->hdmi.base.transform.region.right ||
-               ext_hdmi->hdmi.base.transform.region.top >= ext_hdmi->hdmi.base.transform.region.bottom) {
-            struct hwc_rect fb_region = { .right = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.width,
-                                          .bottom = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.height };
-            ext_hdmi->hdmi.base.transform.region = fb_region;
-        }
-        ALOGI("clone region is set to (%d,%d) to (%d,%d)",
-                ext_hdmi->hdmi.base.transform.region.left, ext_hdmi->hdmi.base.transform.region.top,
-                ext_hdmi->hdmi.base.transform.region.right, ext_hdmi->hdmi.base.transform.region.bottom);
-
         /* select best mode for mirroring */
         if (ext_hdmi->ext.is_mirroring) {
+            ext_hdmi->hdmi.base.transform.region = primary->mirroring_region;
             if (setup_mirroring(hwc_dev) == 0) {
                 unblank_display(hwc_dev, HWC_DISPLAY_EXTERNAL);
             } else
