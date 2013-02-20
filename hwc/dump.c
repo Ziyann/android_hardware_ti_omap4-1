@@ -86,7 +86,7 @@ void dump_display(omap_hwc_device_t *hwc_dev, dump_buf_t *log, int disp)
                      display->type == DISP_TYPE_WFD ? "WFD" : "unknown",
                      config->xres, config->yres, device_resolution);
 
-    if (get_display_mode(hwc_dev, disp) == DISP_MODE_LEGACY) {
+    if (display->mode == DISP_MODE_LEGACY) {
         dump_printf(log, "    legacy mode\n");
         return;
     }

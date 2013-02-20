@@ -736,7 +736,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     layer_statistics_t *layer_stats = &display->layer_stats;
     blitter_config_t *blitter = &hwc_dev->blitter;
 
-    if (get_display_mode(hwc_dev, disp) == DISP_MODE_LEGACY) {
+    if (is_external_display_mirroring(hwc_dev, disp)) {
         /* mirror the layers from primary display composition */
         composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
         struct dsscomp_setup_dispc_data *dsscomp_primary = &primary_comp->comp_data.dsscomp_data;
@@ -820,7 +820,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     uint32_t tiler1d_slot_size = hwc_dev->dsscomp.limits.tiler1d_slot_size;
     int ext_disp = get_external_display_id(hwc_dev);
     if (hwc_dev->dsscomp.last_ext_ovls ||
-            (ext_disp >= 0 && get_display_mode(hwc_dev, ext_disp) != DISP_MODE_LEGACY)) {
+            (ext_disp >= 0 && !is_external_display_mirroring(hwc_dev, ext_disp))) {
         tiler1d_slot_size = tiler1d_slot_size >> 1;
     }
 
@@ -1012,20 +1012,6 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     detect_virtual_displays(hwc_dev, numDisplays, displays);
     set_display_contents(hwc_dev, numDisplays, displays);
 
-    int ext_disp = get_external_display_id(hwc_dev);
-    if (ext_disp >= 0) {
-        external_display_t *ext = NULL;
-        if (is_hdmi_display(hwc_dev, ext_disp))
-            ext = &((external_hdmi_display_t*)hwc_dev->displays[ext_disp])->ext;
-
-        if (ext) {
-            if (get_display_mode(hwc_dev, ext_disp) == DISP_MODE_LEGACY)
-                ext->is_mirroring = true;
-            else
-                ext->is_mirroring = false;
-        }
-    }
-
     reserve_overlays_for_displays(hwc_dev);
     reset_blitter(hwc_dev);
 
@@ -1065,7 +1051,7 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
             *invalidate = true;
     }
 
-    if (get_display_mode(hwc_dev, disp) == DISP_MODE_LEGACY)
+    if (is_external_display_mirroring(hwc_dev, disp))
         return 0;
 
     hwc_display_t dpy = NULL;

@@ -530,6 +530,56 @@ void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hw
     }
 }
 
+static int get_layer_stack(omap_hwc_device_t *hwc_dev, int disp, uint32_t *stack)
+{
+    hwc_layer_stack_t stackInfo = {.dpy = disp};
+    void *param = &stackInfo;
+    int err = hwc_dev->procs->extension_cb(hwc_dev->procs, HWC_EXTENDED_OP_LAYERSTACK, &param, sizeof(stackInfo));
+    if (err)
+        return err;
+
+    *stack = stackInfo.stack;
+
+    return 0;
+}
+
+static uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
+{
+    if (!is_valid_display(hwc_dev, disp))
+        return DISP_MODE_INVALID;
+
+    if (disp == HWC_DISPLAY_PRIMARY)
+        return DISP_MODE_PRESENTATION;
+
+    display_t *display = hwc_dev->displays[disp];
+
+    if (display->type == DISP_TYPE_UNKNOWN)
+        return DISP_MODE_INVALID;
+
+    if (!display->contents)
+        return DISP_MODE_INVALID;
+
+    if (!(display->contents->flags & HWC_EXTENDED_API) || !hwc_dev->procs || !hwc_dev->procs->extension_cb)
+        return DISP_MODE_LEGACY;
+
+    uint32_t primaryStack, stack;
+    int err;
+
+    err = get_layer_stack(hwc_dev, HWC_DISPLAY_PRIMARY, &primaryStack);
+    if (err)
+        return DISP_MODE_INVALID;
+
+    err = get_layer_stack(hwc_dev, disp, &stack);
+    if (err)
+        return DISP_MODE_INVALID;
+
+    if (stack != primaryStack)
+        return DISP_MODE_PRESENTATION;
+
+    return DISP_MODE_LEGACY;
+}
+
+
 void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays) {
     size_t i;
 
@@ -542,6 +592,8 @@ void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_d
             display->contents = displays[i];
 
             gather_layer_statistics(hwc_dev, i);
+
+            display->mode = get_display_mode(hwc_dev, i);
         }
     }
 
@@ -635,55 +687,6 @@ int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t cfg, c
     return 0;
 }
 
-static int get_layer_stack(omap_hwc_device_t *hwc_dev, int disp, uint32_t *stack)
-{
-    hwc_layer_stack_t stackInfo = {.dpy = disp};
-    void *param = &stackInfo;
-    int err = hwc_dev->procs->extension_cb(hwc_dev->procs, HWC_EXTENDED_OP_LAYERSTACK, &param, sizeof(stackInfo));
-    if (err)
-        return err;
-
-    *stack = stackInfo.stack;
-
-    return 0;
-}
-
-uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
-{
-    if (!is_valid_display(hwc_dev, disp))
-        return DISP_MODE_INVALID;
-
-    if (disp == HWC_DISPLAY_PRIMARY)
-        return DISP_MODE_PRESENTATION;
-
-    display_t *display = hwc_dev->displays[disp];
-
-    if (display->type == DISP_TYPE_UNKNOWN)
-        return DISP_MODE_INVALID;
-
-    if (!display->contents)
-        return DISP_MODE_INVALID;
-
-    if (!(display->contents->flags & HWC_EXTENDED_API) || !hwc_dev->procs || !hwc_dev->procs->extension_cb)
-        return DISP_MODE_LEGACY;
-
-    uint32_t primaryStack, stack;
-    int err;
-
-    err = get_layer_stack(hwc_dev, HWC_DISPLAY_PRIMARY, &primaryStack);
-    if (err)
-        return DISP_MODE_INVALID;
-
-    err = get_layer_stack(hwc_dev, disp, &stack);
-    if (err)
-        return DISP_MODE_INVALID;
-
-    if (stack != primaryStack)
-        return DISP_MODE_PRESENTATION;
-
-    return DISP_MODE_LEGACY;
-}
-
 bool is_valid_display(omap_hwc_device_t *hwc_dev, int disp)
 {
     if (disp < 0 || disp > MAX_DISPLAY_ID || !hwc_dev->displays[disp])
@@ -714,11 +717,10 @@ bool is_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
 
 bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp)
 {
-    external_display_t *ext = NULL;
-    if (is_hdmi_display(hwc_dev, disp))
-        ext = &((external_hdmi_display_t*)hwc_dev->displays[disp])->ext;
+    if (!is_active_display(hwc_dev, disp))
+        return false;
 
-    if (ext && ext->is_mirroring)
+    if (hwc_dev->displays[disp]->mode == DISP_MODE_LEGACY)
         return true;
 
     return false;
