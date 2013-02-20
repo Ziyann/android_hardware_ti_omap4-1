@@ -95,8 +95,9 @@ struct display {
     display_config_t *configs;
     uint32_t active_config_ix;
 
-    uint32_t type;
-    uint32_t role;
+    uint32_t type;    /* enum disp_type */
+    uint32_t role;    /* enum disp_role */
+    uint32_t mode;    /* enum disp_mode */
 
     uint32_t mgr_ix;
 
@@ -168,7 +169,6 @@ void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_d
 int get_external_display_id(omap_hwc_device_t *hwc_dev);
 int get_display_configs(omap_hwc_device_t *hwc_dev, int disp, uint32_t *configs, size_t *numConfigs);
 int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t config, const uint32_t *attributes, int32_t *values);
-uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp);
 
 bool is_valid_display(omap_hwc_device_t *hwc_dev, int disp);
 bool is_supported_display(omap_hwc_device_t *hwc_dev, int disp);
