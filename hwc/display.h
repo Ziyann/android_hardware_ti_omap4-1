@@ -118,7 +118,7 @@ struct primary_display {
 typedef struct primary_display primary_display_t;
 
 struct external_display {
-    bool is_mirroring;      /* mirroring or distinct mode */
+    uint32_t last_mode;    /* enum disp_mode */
 };
 typedef struct external_display external_display_t;
 
@@ -132,8 +132,7 @@ struct hdmi_display {
     display_t base;
     uint16_t width;         /* external screen dimensions */
     uint16_t height;
-    uint32_t current_mode;
-    uint32_t last_mode;
+    uint32_t video_mode_ix;    /* TWO's complement of video mode index */
     struct dsscomp_videomode mode_db[MAX_DISPLAY_CONFIGS];
 };
 typedef struct hdmi_display hdmi_display_t;
@@ -155,6 +154,8 @@ struct external_hdmi_display {
 };
 typedef struct external_hdmi_display external_hdmi_display_t;
 
+int init_hdmi_display(omap_hwc_device_t *hwc_dev, int disp);
+
 int init_primary_display(omap_hwc_device_t *hwc_dev);
 void reset_primary_display(omap_hwc_device_t *hwc_dev);
 primary_display_t *get_primary_display_info(omap_hwc_device_t *hwc_dev);
@@ -162,6 +163,7 @@ primary_display_t *get_primary_display_info(omap_hwc_device_t *hwc_dev);
 int add_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev);
+external_display_t *get_external_display_info(omap_hwc_device_t *hwc_dev, int disp);
 
 void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
 void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
