@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/ioctl.h>
+#include <stdlib.h>
 
 #include <cutils/log.h>
 #include <cutils/properties.h>
@@ -311,6 +312,20 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
     return 0;
 }
 
+int init_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    hdmi_display_t *hdmi = (hdmi_display_t*)hwc_dev->displays[disp];
+    if (!hdmi)
+        return -ENODEV;
+
+    uint32_t mode_db_len = sizeof(hdmi->mode_db) / sizeof(hdmi->mode_db[0]);
+    int err = get_dsscomp_display_mode_db(hwc_dev, hwc_dev->displays[disp]->mgr_ix, hdmi->mode_db, &mode_db_len);
+    if (!err)
+        hdmi->base.fb_info.modedb_len = mode_db_len;
+
+    return err;
+}
+
 int init_primary_display(omap_hwc_device_t *hwc_dev)
 {
     if (hwc_dev->displays[HWC_DISPLAY_PRIMARY]) {
@@ -471,6 +486,12 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
         }
     }
 
+    ext_hdmi->ext.last_mode = DISP_MODE_INVALID;
+    /* check set props */
+    char value[PROPERTY_VALUE_MAX];
+    property_get("persist.hwc.avoid_mode_change", value, "1");
+    ext_hdmi->avoid_mode_change = atoi(value) > 0;
+
     return 0;
 }
 
@@ -505,6 +526,20 @@ struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev
     } else {
         return NULL;
     }
+}
+
+external_display_t *get_external_display_info(omap_hwc_device_t *hwc_dev, int disp)
+{
+    if (!is_valid_display(hwc_dev, disp))
+        return NULL;
+
+    display_t *display = hwc_dev->displays[disp];
+    external_display_t *ext = NULL;
+
+    if (is_hdmi_display(hwc_dev, disp))
+        ext = &((external_hdmi_display_t*)display)->ext;
+
+    return ext;
 }
 
 void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays) {

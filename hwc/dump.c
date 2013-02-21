@@ -70,8 +70,8 @@ void dump_display(omap_hwc_device_t *hwc_dev, dump_buf_t *log, int disp)
         device_yres = display->fb_info.timings.y_res;
     } else if (display->type == DISP_TYPE_HDMI) {
         hdmi_display_t *hdmi = (hdmi_display_t*)display;
-        device_xres = hdmi->mode_db[~hdmi->current_mode].xres;
-        device_yres = hdmi->mode_db[~hdmi->current_mode].yres;
+        device_xres = hdmi->mode_db[~hdmi->video_mode_ix].xres;
+        device_yres = hdmi->mode_db[~hdmi->video_mode_ix].yres;
     }
 
     char device_resolution[32] = {'\0'};

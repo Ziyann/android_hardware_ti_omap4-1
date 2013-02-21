@@ -233,9 +233,8 @@ static void set_ext_matrix(omap_hwc_device_t *hwc_dev, struct hwc_rect region)
         hdmi_display_t *hdmi = &((external_hdmi_display_t*)ext_display)->hdmi;
         width = hdmi->width;
         height = hdmi->height;
-        xres = hdmi->mode_db[~hdmi->current_mode].xres;
-        yres = hdmi->mode_db[~hdmi->current_mode].yres;
-        ext_display->transform.scaling = ((xres != orig_w) || (yres != orig_h));
+        xres = hdmi->mode_db[~hdmi->video_mode_ix].xres;
+        yres = hdmi->mode_db[~hdmi->video_mode_ix].yres;
     } else {
         display_config_t *config = &ext_display->configs[ext_display->active_config_ix];
         width = 0;
@@ -243,6 +242,8 @@ static void set_ext_matrix(omap_hwc_device_t *hwc_dev, struct hwc_rect region)
         xres = config->xres;
         yres = config->yres;
     }
+
+    ext_display->transform.scaling = ((xres != orig_w) || (yres != orig_h));
 
     get_max_dimensions(orig_w, orig_h, xpy,
                        xres, yres, width, height,
@@ -422,33 +423,26 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, int disp, uint32_t xres, uint
         return -ENODEV;
 
     struct dsscomp_display_info *info = &display->fb_info;
-    uint32_t mode_db_len = sizeof(hdmi->mode_db) / sizeof(hdmi->mode_db[0]);
-    int err;
-
-    err = get_dsscomp_display_mode_db(hwc_dev, display->mgr_ix, hdmi->mode_db, &mode_db_len);
-    if (err)
-        return err;
-
     if (info->timings.x_res * info->timings.y_res == 0 || xres * yres == 0)
         return -EINVAL;
 
     uint32_t i, best = ~0, best_score = 0;
     uint32_t ext_fb_xres, ext_fb_yres;
-
-    for (i = 0; i < mode_db_len; i++) {
+    for (i = 0; i < info->modedb_len; i++) {
         uint32_t score = 0;
-        uint32_t mode_xres = hdmi->mode_db[i].xres;
-        uint32_t mode_yres = hdmi->mode_db[i].yres;
+        struct dsscomp_videomode *mode = &hdmi->mode_db[i];
+        uint32_t mode_xres = mode->xres;
+        uint32_t mode_yres = mode->yres;
         uint32_t ext_width = info->width_in_mm;
         uint32_t ext_height = info->height_in_mm;
 
-        if (hdmi->mode_db[i].vmode & FB_VMODE_INTERLACED)
+        if (mode->vmode & FB_VMODE_INTERLACED)
             mode_yres /= 2;
 
-        if (hdmi->mode_db[i].flag & FB_FLAG_RATIO_4_3) {
+        if (mode->flag & FB_FLAG_RATIO_4_3) {
             ext_width = 4;
             ext_height = 3;
-        } else if (hdmi->mode_db[i].flag & FB_FLAG_RATIO_16_9) {
+        } else if (mode->flag & FB_FLAG_RATIO_16_9) {
             ext_width = 16;
             ext_height = 9;
         }
@@ -460,23 +454,23 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, int disp, uint32_t xres, uint
                            ext_width, ext_height, &ext_fb_xres, &ext_fb_yres);
 
         /* we need to ensure that even TILER2D buffers can be scaled */
-        if (!hdmi->mode_db[i].pixclock ||
-            (hdmi->mode_db[i].vmode & ~FB_VMODE_INTERLACED) ||
+        if (!mode->pixclock ||
+            (mode->vmode & ~FB_VMODE_INTERLACED) ||
             !can_dss_scale(hwc_dev, xres, yres, ext_fb_xres, ext_fb_yres, true,
-                           info, 1000000000 / hdmi->mode_db[i].pixclock))
+                           info, 1000000000 / mode->pixclock))
             continue;
 
         /* prefer CEA modes */
-        if (hdmi->mode_db[i].flag & (FB_FLAG_RATIO_4_3 | FB_FLAG_RATIO_16_9))
+        if (mode->flag & (FB_FLAG_RATIO_4_3 | FB_FLAG_RATIO_16_9))
             score = 1;
 
         /* prefer the same mode as we use for mirroring to avoid mode change */
-        score = (score << 1) | (i == ~hdmi->current_mode && avoid_mode_change);
+        score = (score << 1) | (i == ~hdmi->video_mode_ix && avoid_mode_change);
 
         score = add_scaling_score(score, xres, yres, 60, ext_fb_xres, ext_fb_yres,
-                                  mode_xres, mode_yres, hdmi->mode_db[i].refresh ? : 1);
+                                  mode_xres, mode_yres, mode->refresh ? : 1);
 
-        ALOGD("#%d: %dx%d %dHz", i, mode_xres, mode_yres, hdmi->mode_db[i].refresh);
+        ALOGD("#%d: %dx%d %dHz", i, mode_xres, mode_yres, mode->refresh);
         if (debug)
             ALOGD("  score=0x%x adj.res=%dx%d", score, ext_fb_xres, ext_fb_yres);
         if (best_score < score) {
@@ -490,12 +484,12 @@ int set_best_hdmi_mode(omap_hwc_device_t *hwc_dev, int disp, uint32_t xres, uint
     if (~best) {
         ALOGD("picking #%d", best);
         /* only reconfigure on change */
-        if (hdmi->current_mode != ~best) {
-            err = setup_dsscomp_display(hwc_dev, display->mgr_ix, &hdmi->mode_db[best]);
+        if (hdmi->video_mode_ix != ~best) {
+            int err = setup_dsscomp_display(hwc_dev, display->mgr_ix, &hdmi->mode_db[best]);
             if (err)
                 return err;
 
-            hdmi->current_mode = ~best;
+            hdmi->video_mode_ix = ~best;
         }
     } else {
         hdmi->width = info->width_in_mm;
@@ -632,7 +626,7 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
     return 0;
 }
 
-static int setup_mirroring(omap_hwc_device_t *hwc_dev)
+static int setup_ext_transform(omap_hwc_device_t *hwc_dev)
 {
     int ext_disp = get_external_display_id(hwc_dev);
     if (ext_disp < 0)
@@ -641,6 +635,13 @@ static int setup_mirroring(omap_hwc_device_t *hwc_dev)
     display_t *ext_display = hwc_dev->displays[ext_disp];
     uint32_t xres = WIDTH(ext_display->transform.region);
     uint32_t yres = HEIGHT(ext_display->transform.region);
+
+    if (!(xres && yres))
+        return -EINVAL;
+
+    int rot_flip = (yres > xres) ? 3 : 0;
+    ext_display->transform.rotation = rot_flip & EXT_ROTATION;
+    ext_display->transform.hflip = (rot_flip & EXT_HFLIP) > 0;
 
     if (ext_display->transform.rotation & 1)
         SWAP(xres, yres);
@@ -736,6 +737,25 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     layer_statistics_t *layer_stats = &display->layer_stats;
     blitter_config_t *blitter = &hwc_dev->blitter;
 
+    if (display->role == HWC_DISPLAY_EXTERNAL) {
+        external_display_t *ext = get_external_display_info(hwc_dev, disp);
+        if (ext && ext->last_mode != display->mode) {
+            if (display->mode == DISP_MODE_PRESENTATION) {
+                display_config_t *config = &display->configs[display->active_config_ix];
+                struct hwc_rect src_region = { .right = config->xres, .bottom = config->yres };
+                display->transform.region = src_region;
+            } else {
+                primary_display_t *primary = get_primary_display_info(hwc_dev);
+                if (!primary)
+                    return -ENODEV;
+
+                display->transform.region = primary->mirroring_region;
+            }
+            if (!setup_ext_transform(hwc_dev))
+                ext->last_mode = display->mode;
+        }
+    }
+
     if (is_external_display_mirroring(hwc_dev, disp)) {
         /* mirror the layers from primary display composition */
         composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
@@ -817,8 +837,8 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         ovl_ix++;
     }
 
-    uint32_t tiler1d_slot_size = hwc_dev->dsscomp.limits.tiler1d_slot_size;
     int ext_disp = get_external_display_id(hwc_dev);
+    uint32_t tiler1d_slot_size = hwc_dev->dsscomp.limits.tiler1d_slot_size;
     if (hwc_dev->dsscomp.last_ext_ovls ||
             (ext_disp >= 0 && !is_external_display_mirroring(hwc_dev, ext_disp))) {
         tiler1d_slot_size = tiler1d_slot_size >> 1;
@@ -970,16 +990,9 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
      * display
      */
     if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
-        hdmi_display_t *hdmi = &((primary_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY])->hdmi;
-        if (hdmi->current_mode == 0)
+        hdmi_display_t *hdmi = (hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+        if (hdmi->video_mode_ix == 0)
             dsscomp->num_ovls = 0;
-        hdmi->last_mode = hdmi->current_mode;
-    }
-
-    if (is_hdmi_display(hwc_dev, ext_disp)) {
-        hdmi_display_t *hdmi = &((external_hdmi_display_t*)hwc_dev->displays[ext_disp])->hdmi;
-        //mode tracking is required to switch modes during mirror and distinct mode switch
-        hdmi->last_mode = hdmi->current_mode;
     }
 
     if (debug) {
@@ -1254,6 +1267,10 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
         if (state) {
             uint32_t xres = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.width;
             uint32_t yres = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.height;
+
+            if (!init_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
+                return;
+
             primary_display_t *primary = get_primary_display_info(hwc_dev);
             if (!primary || set_best_hdmi_mode(hwc_dev, HWC_DISPLAY_PRIMARY, xres, yres, primary->xpy)) {
                 ALOGE("Failed to set HDMI mode");
@@ -1261,7 +1278,7 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
         } else {
             hdmi_display_t *hdmi = &((primary_hdmi_display_t*) hwc_dev->displays[HWC_DISPLAY_PRIMARY])->hdmi;
             if (hdmi)
-                hdmi->current_mode = 0;
+                hdmi->video_mode_ix = 0;
         }
         return;
     }
@@ -1270,41 +1287,12 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
     if (state) {
         int err = -1;
         err = add_external_hdmi_display(hwc_dev);
-        if (err) {
-            pthread_mutex_unlock(&hwc_dev->lock);
-            return;
-        }
+        if (err)
+            goto done;
 
-        external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*) hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-        display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
-        primary_display_t *primary = get_primary_display_info(hwc_dev);
-
-        if (!(primary && primary_display && ext_hdmi)) {
-            pthread_mutex_unlock(&hwc_dev->lock);
-            return;
-        }
-
-        /* check whether we can clone */
-        char value[PROPERTY_VALUE_MAX];
-        property_get("persist.hwc.mirroring.enabled", value, "1");
-        ext_hdmi->ext.is_mirroring = atoi(value) > 0;
-        property_get("persist.hwc.avoid_mode_change", value, "1");
-        ext_hdmi->avoid_mode_change = atoi(value) > 0;
-
-        /* get cloning transformation */
-        property_get("persist.hwc.mirroring.transform", value,
-                     primary_display->fb_info.timings.y_res > primary_display->fb_info.timings.x_res ? "3" : "0");
-        ext_hdmi->hdmi.base.transform.rotation = atoi(value) & EXT_ROTATION;
-        ext_hdmi->hdmi.base.transform.hflip = (atoi(value) & EXT_HFLIP) > 0;
-
-        /* select best mode for mirroring */
-        if (ext_hdmi->ext.is_mirroring) {
-            ext_hdmi->hdmi.base.transform.region = primary->mirroring_region;
-            if (setup_mirroring(hwc_dev) == 0) {
-                unblank_display(hwc_dev, HWC_DISPLAY_EXTERNAL);
-            } else
-            ext_hdmi->ext.is_mirroring = 0;
-        }
+        err = init_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL);
+        if (err)
+            goto done;
     } else
         remove_external_hdmi_display(hwc_dev);
 
@@ -1328,6 +1316,15 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
                 hwc_dev->procs->invalidate(hwc_dev->procs);
         }
     }
+    return;
+
+done:
+    if(hwc_dev->displays[HWC_DISPLAY_EXTERNAL])
+        remove_external_hdmi_display(hwc_dev);
+
+    pthread_mutex_unlock(&hwc_dev->lock);
+    return;
+
 }
 
 static void handle_uevents(omap_hwc_device_t *hwc_dev, const char *buff, int len)
