@@ -549,16 +549,17 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
 
 static void setup_framebuffer(omap_hwc_device_t *hwc_dev, int disp, int ovl_ix, int zorder)
 {
-    composition_t *comp = &hwc_dev->displays[disp]->composition;
+    display_t *display = hwc_dev->displays[disp];
+    composition_t *comp = &display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    display_config_t *config = &display->configs[display->active_config_ix];
     struct dss2_ovl_info *fb_ovl = &dsscomp->ovls[0];
     uint32_t i;
 
     setup_overlay(zorder,
                   hwc_dev->fb_dev[disp]->base.format,
                   true,   /* FB is always premultiplied */
-                  hwc_dev->fb_dev[disp]->base.width,
-                  hwc_dev->fb_dev[disp]->base.height,
+                  config->xres, config->yres,
                   fb_ovl);
 
     fb_ovl->cfg.mgr_ix = hwc_dev->displays[disp]->mgr_ix;
@@ -617,8 +618,13 @@ static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
     display_t *display = hwc_dev->displays[disp];
     wfd_display_t *wfd = (wfd_display_t *)display;
     display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
-    // TODO: Only legacy mode is supported for now -- use primary composition
-    composition_t *comp = &primary_display->composition;
+
+    composition_t *comp;
+    if (is_external_display_mirroring(hwc_dev, disp))
+        comp = &primary_display->composition;
+    else
+        comp = &display->composition;
+
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
 
     wfd->use_wb = wb_capture_layer(&wfd->wb_layer);
@@ -945,6 +951,9 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         hwc_dev->dsscomp.last_ext_ovls = 0;
     }
 
+    if (is_wfd_display(hwc_dev, disp))
+        setup_wb_capture(hwc_dev, disp);
+
     /*
      * Whilst the mode of the display is being changed drop compositions to the
      * display
@@ -1095,7 +1104,8 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
                              comp->buffers, num_buffers,
                              dsscomp, omaplfb_comp_data_sz);
 
-        showfps();
+        if (disp == HWC_DISPLAY_PRIMARY)
+            showfps();
 
         int ext_disp = get_external_display_id(hwc_dev);
 

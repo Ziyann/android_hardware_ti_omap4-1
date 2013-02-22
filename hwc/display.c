@@ -383,6 +383,9 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
 
     display->transform.region = primary->mirroring_region;
 
+    // HACK: WFD display does not have its own FB device, so instead we use FB of external HDMI display
+    hwc_dev->fb_dev[disp] = hwc_dev->fb_dev[HWC_DISPLAY_EXTERNAL];
+
     return 0;
 }
 
@@ -697,10 +700,6 @@ static uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
 
     if (!display->contents)
         return DISP_MODE_INVALID;
-
-    // HACK: force WFD to legacy mirroring mode until WB M2M is operational
-    if (display->type == DISP_TYPE_WFD)
-        return DISP_MODE_LEGACY;
 
     if (!(display->contents->flags & HWC_EXTENDED_API) || !hwc_dev->procs || !hwc_dev->procs->extension_cb)
         return DISP_MODE_LEGACY;
