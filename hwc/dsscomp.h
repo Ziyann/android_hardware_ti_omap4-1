@@ -53,4 +53,6 @@ bool can_dss_scale(omap_hwc_device_t *hwc_dev, uint32_t src_w, uint32_t src_h,
 bool can_dss_render_all_layers(omap_hwc_device_t *hwc_dev, int disp);
 bool can_dss_render_layer(omap_hwc_device_t *hwc_dev, int disp, hwc_layer_1_t *layer);
 
+uint32_t decide_dss_wb_capture_mode(uint32_t src_xres, uint32_t src_yres, uint32_t dst_xres, uint32_t dst_yres);
+
 #endif

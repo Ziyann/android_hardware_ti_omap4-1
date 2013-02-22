@@ -47,8 +47,6 @@
 #include "sw_vsync.h"
 #include "utils.h"
 
-#define ASPECT_RATIO_TOLERANCE 0.02f
-
 /* copied from: KK bionic/libc/kernel/common/linux/fb.h */
 #ifndef FB_FLAG_RATIO_4_3
 #define FB_FLAG_RATIO_4_3 64
@@ -56,12 +54,6 @@
 #ifndef FB_FLAG_RATIO_16_9
 #define FB_FLAG_RATIO_16_9 128
 #endif
-
-/* used by property settings */
-enum {
-    EXT_ROTATION    = 3,        /* rotation while mirroring */
-    EXT_HFLIP       = (1 << 2), /* flip l-r on output (after rotation) */
-};
 
 static bool debug = false;
 static bool debug_post2 = false;
@@ -160,98 +152,6 @@ static void adjust_overlay_to_layer(omap_hwc_device_t *hwc_dev __unused, struct 
     oc->crop.y = layer->sourceCrop.top;
     oc->crop.w = WIDTH(layer->sourceCrop);
     oc->crop.h = HEIGHT(layer->sourceCrop);
-}
-
-/*
- * assuming xpy (xratio:yratio) original pixel ratio, calculate the adjusted width
- * and height for a screen of xres/yres and physical size of width/height.
- * The adjusted size is the largest that fits into the screen.
- */
-static void get_max_dimensions(uint32_t orig_xres, uint32_t orig_yres,
-                               float xpy,
-                               uint32_t scr_xres, uint32_t scr_yres,
-                               uint32_t scr_width, uint32_t scr_height,
-                               uint32_t *adj_xres, uint32_t *adj_yres)
-{
-    /* assume full screen (largest size)*/
-    *adj_xres = scr_xres;
-    *adj_yres = scr_yres;
-
-    /* assume 1:1 pixel ratios if none supplied */
-    if (!scr_width || !scr_height) {
-        scr_width = scr_xres;
-        scr_height = scr_yres;
-    }
-
-    /* trim to keep aspect ratio */
-    float x_factor = orig_xres * xpy * scr_height;
-    float y_factor = orig_yres *       scr_width;
-
-    /* allow for tolerance so we avoid scaling if framebuffer is standard size */
-    if (x_factor < y_factor * (1.f - ASPECT_RATIO_TOLERANCE))
-        *adj_xres = (uint32_t) (x_factor * *adj_xres / y_factor + 0.5);
-    else if (x_factor * (1.f - ASPECT_RATIO_TOLERANCE) > y_factor)
-        *adj_yres = (uint32_t) (y_factor * *adj_yres / x_factor + 0.5);
-}
-
-static void set_ext_matrix(omap_hwc_device_t *hwc_dev, struct hwc_rect region)
-{
-    int orig_w = WIDTH(region);
-    int orig_h = HEIGHT(region);
-
-    /* reorientation matrix is:
-       m = (center-from-target-center) * (scale-to-target) * (mirror) * (rotate) * (center-to-original-center) */
-
-    int ext_disp = get_external_display_id(hwc_dev);
-    if (ext_disp < 0)
-        return;
-
-    display_t *ext_display = hwc_dev->displays[ext_disp];
-    display_transform_t *transform = &ext_display->transform;
-
-    memcpy(transform->matrix, unit_matrix, sizeof(unit_matrix));
-    translate_matrix(transform->matrix, -(orig_w / 2.0f) - region.left, -(orig_h / 2.0f) - region.top);
-    rotate_matrix(transform->matrix, transform->rotation);
-    if (transform->hflip)
-        scale_matrix(transform->matrix, 1, -1, 1, 1);
-
-    primary_display_t *primary = get_primary_display_info(hwc_dev);
-    if (!primary)
-        return;
-
-    float xpy = primary->xpy;
-
-    if (transform->rotation & 1) {
-        SWAP(orig_w, orig_h);
-        xpy = 1.0f / xpy;
-    }
-
-    /* get target size */
-    uint32_t adj_xres, adj_yres;
-    uint32_t width, height;
-    int xres, yres;
-    if (is_hdmi_display(hwc_dev, ext_disp)) {
-        hdmi_display_t *hdmi = &((external_hdmi_display_t*)ext_display)->hdmi;
-        width = hdmi->width;
-        height = hdmi->height;
-        xres = hdmi->mode_db[~hdmi->video_mode_ix].xres;
-        yres = hdmi->mode_db[~hdmi->video_mode_ix].yres;
-    } else {
-        display_config_t *config = &ext_display->configs[ext_display->active_config_ix];
-        width = 0;
-        height = 0;
-        xres = config->xres;
-        yres = config->yres;
-    }
-
-    ext_display->transform.scaling = ((xres != orig_w) || (yres != orig_h));
-
-    get_max_dimensions(orig_w, orig_h, xpy,
-                       xres, yres, width, height,
-                       &adj_xres, &adj_yres);
-
-    scale_matrix(transform->matrix, orig_w, adj_xres, orig_h, adj_yres);
-    translate_matrix(transform->matrix, xres >> 1, yres >> 1);
 }
 
 static int crop_overlay_to_rect(struct hwc_rect vis_rect, struct dss2_ovl_info *ovl)
@@ -547,11 +447,21 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
     display_t *ext_display = hwc_dev->displays[ext_disp];
 
     if (is_wfd_display(hwc_dev, ext_disp)) {
-        // TODO: check if we have the same aspect ratio on LCD and WFD here
         wfd_display_t *wfd = (wfd_display_t *)ext_display;
-        wfd->wb_mode = OMAP_WB_CAPTURE_MODE;
 
-        return;
+        if (is_external_display_mirroring(hwc_dev, ext_disp)) {
+            uint32_t screen_xres = WIDTH(ext_display->transform.region);
+            uint32_t screen_yres = HEIGHT(ext_display->transform.region);
+            display_config_t *config = &ext_display->configs[ext_display->active_config_ix];
+
+            wfd->wb_mode = decide_dss_wb_capture_mode(config->xres, config->yres, screen_xres, screen_yres);
+        } else {
+            /* Presentation or legacy docking mode */
+            wfd->wb_mode = OMAP_WB_MEM2MEM_MODE;
+        }
+
+        if (wfd->wb_mode == OMAP_WB_CAPTURE_MODE)
+            return;
     }
 
     /*
@@ -637,37 +547,6 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
     return 0;
 }
 
-static int setup_ext_transform(omap_hwc_device_t *hwc_dev)
-{
-    int ext_disp = get_external_display_id(hwc_dev);
-    if (ext_disp < 0)
-        return -ENODEV;
-
-    display_t *ext_display = hwc_dev->displays[ext_disp];
-    uint32_t xres = WIDTH(ext_display->transform.region);
-    uint32_t yres = HEIGHT(ext_display->transform.region);
-
-    if (!(xres && yres))
-        return -EINVAL;
-
-    int rot_flip = (yres > xres) ? 3 : 0;
-    ext_display->transform.rotation = rot_flip & EXT_ROTATION;
-    ext_display->transform.hflip = (rot_flip & EXT_HFLIP) > 0;
-
-    if (ext_display->transform.rotation & 1)
-        SWAP(xres, yres);
-
-    if (is_hdmi_display(hwc_dev, ext_disp)) {
-        primary_display_t *primary = get_primary_display_info(hwc_dev);
-        if (!primary || set_best_hdmi_mode(hwc_dev, ext_disp, xres, yres, primary->xpy))
-            return -ENODEV;
-    }
-
-    set_ext_matrix(hwc_dev, ext_display->transform.region);
-
-    return 0;
-}
-
 static void setup_framebuffer(omap_hwc_device_t *hwc_dev, int disp, int ovl_ix, int zorder)
 {
     composition_t *comp = &hwc_dev->displays[disp]->composition;
@@ -735,9 +614,11 @@ static void check_sync_fds_for_display(int disp, hwc_display_contents_1_t *list)
 
 static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
 {
-    wfd_display_t *wfd = (wfd_display_t *)hwc_dev->displays[disp];
+    display_t *display = hwc_dev->displays[disp];
+    wfd_display_t *wfd = (wfd_display_t *)display;
+    display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
     // TODO: Only legacy mode is supported for now -- use primary composition
-    composition_t *comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
+    composition_t *comp = &primary_display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
 
     wfd->use_wb = wb_capture_layer(&wfd->wb_layer);
@@ -746,20 +627,38 @@ static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
         comp->buffers[comp->num_buffers] = wfd->wb_layer.handle;
 
         struct dss2_ovl_info *oi = &dsscomp->ovls[dsscomp->num_ovls];
+        int mgr_ix = (wfd->wb_mode == OMAP_WB_CAPTURE_MODE) ? primary_display->mgr_ix : display->mgr_ix;
 
         adjust_overlay_to_layer(hwc_dev, oi, &wfd->wb_layer, 0); /* z-order doesn't matter for WB */
 
+        oi->cfg.mgr_ix = mgr_ix;
         oi->cfg.ix = OMAP_DSS_WB;
         oi->addressing = OMAP_DSS_BUFADDR_LAYER_IX;
         oi->ba = comp->num_buffers;
-        oi->cfg.wb_source = OMAP_WB_LCD1;
+        oi->cfg.wb_source = mgr_ix;
         oi->cfg.wb_mode = wfd->wb_mode;
+
+        if (oi->cfg.wb_mode == OMAP_WB_MEM2MEM_MODE) {
+            /* Video overlays will take care of scaling - no need to scale on WB */
+            oi->cfg.crop = oi->cfg.win;
+        }
 
         dsscomp->num_ovls++;
         dsscomp->mode = DSSCOMP_SETUP_DISPLAY_CAPTURE;
         comp->num_buffers++;
 
         wfd->wb_sync_id = dsscomp->sync_id;
+    } else {
+        /*
+         * We cannot capture this composition, so we have to disable all overlays
+         * configured for M2M mode capture.
+         */
+        if (wfd->wb_mode == OMAP_WB_MEM2MEM_MODE) {
+            int i;
+            for (i = 0; i < dsscomp->num_ovls; i++)
+                if (dsscomp->ovls[i].cfg.mgr_ix == display->mgr_ix)
+                    dsscomp->ovls[i].cfg.enabled = 0;
+        }
     }
 }
 
@@ -799,6 +698,9 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
     dsscomp->num_mgrs++;
 
     hwc_dev->dsscomp.last_ext_ovls = ix;
+
+    if (wfd && wfd->wb_mode == OMAP_WB_MEM2MEM_MODE)
+        setup_wb_capture(hwc_dev, disp);
 }
 
 static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
@@ -830,7 +732,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 
                 display->transform.region = primary->mirroring_region;
             }
-            if (!setup_ext_transform(hwc_dev))
+            if (!setup_external_display_transform(hwc_dev, disp))
                 ext->last_mode = display->mode;
         }
     }

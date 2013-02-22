@@ -31,6 +31,15 @@
 
 #define MAX_MODE_DB_LENGTH 32
 
+#define WB_CAPTURE_MAX_UPSCALE 1.0f
+#define WB_CAPTURE_MAX_DOWNSCALE 0.5f
+
+/*
+ * This tolerance threshold controls decision of whether to use WB in CAPTURE or in MEM2MEM mode
+ * when setting up primary display mirroring.
+ */
+#define WB_ASPECT_RATIO_TOLERANCE 0.15f
+
 int init_dsscomp(omap_hwc_device_t *hwc_dev)
 {
     dsscomp_state_t *dsscomp = &hwc_dev->dsscomp;
@@ -223,4 +232,20 @@ bool can_dss_render_layer(omap_hwc_device_t *hwc_dev, int disp, hwc_layer_1_t *l
             !hwc_dev->flags_rgb_order) &&
            /* TV can only render RGB */
            !(on_tv && is_bgr_layer(layer));
+}
+
+uint32_t decide_dss_wb_capture_mode(uint32_t src_xres, uint32_t src_yres, uint32_t dst_xres, uint32_t dst_yres)
+{
+    uint32_t wb_mode = OMAP_WB_CAPTURE_MODE;
+    float x_scale_factor = (float)src_xres / dst_xres;
+    float y_scale_factor = (float)src_yres / dst_yres;
+
+    if (x_scale_factor > WB_CAPTURE_MAX_UPSCALE || y_scale_factor > WB_CAPTURE_MAX_UPSCALE ||
+        x_scale_factor < WB_CAPTURE_MAX_DOWNSCALE || y_scale_factor < WB_CAPTURE_MAX_DOWNSCALE ||
+        x_scale_factor < y_scale_factor * (1.f - WB_ASPECT_RATIO_TOLERANCE) ||
+        x_scale_factor * (1.f - WB_ASPECT_RATIO_TOLERANCE) > y_scale_factor) {
+        wb_mode = OMAP_WB_MEM2MEM_MODE;
+    }
+
+    return wb_mode;
 }

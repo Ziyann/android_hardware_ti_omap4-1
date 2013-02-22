@@ -17,6 +17,8 @@
 #ifndef __UTILS__
 #define __UTILS__
 
+#include <stdint.h>
+
 #define MIN(a, b) ( { typeof(a) __a = (a), __b = (b); __a < __b ? __a : __b; } )
 #define MAX(a, b) ( { typeof(a) __a = (a), __b = (b); __a > __b ? __a : __b; } )
 #define SWAP(a, b) do { typeof(a) __a = (a); (a) = (b); (b) = __a; } while (0)
@@ -34,5 +36,16 @@ void translate_matrix(transform_matrix m, float dx, float dy);
 void scale_matrix(transform_matrix m, int x_from, int x_to, int y_from, int y_to);
 void rotate_matrix(transform_matrix m, int quarter_turns);
 int round_float(float x);
+
+/*
+ * Assuming xpy (xratio:yratio) original pixel ratio, calculate the adjusted width
+ * and height for a screen of xres/yres and physical size of width/height.
+ * The adjusted size is the largest that fits into the screen.
+ */
+void get_max_dimensions(uint32_t orig_xres, uint32_t orig_yres,
+                        float xpy,
+                        uint32_t scr_xres, uint32_t scr_yres,
+                        uint32_t scr_width, uint32_t scr_height,
+                        uint32_t *adj_xres, uint32_t *adj_yres);
 
 #endif
