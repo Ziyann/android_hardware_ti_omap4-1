@@ -59,6 +59,12 @@
 #define INCH_TO_MM 25.4f
 #define MAX_HWC_LAYERS 32
 
+/* Used by property settings */
+enum {
+    EXT_ROTATION    = 3,        /* rotation while mirroring */
+    EXT_HFLIP       = (1 << 2), /* flip l-r on output (after rotation) */
+};
+
 static void free_display(display_t *display)
 {
     if (display) {
@@ -218,24 +224,83 @@ static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
     int orig_w = fb_dev->base.width;
     int orig_h = fb_dev->base.height;
     hwc_rect_t region = {.left = 0, .top = 0, .right = orig_w, .bottom = orig_h};
+    display_transform_t *transform = &display->transform;
 
-    display->transform.region = region;
-    display->transform.rotation= ((lcd_w > lcd_h) ^ (orig_w > orig_h)) ? 1 : 0;
-    display->transform.scaling= ((lcd_w != orig_w)||(lcd_h != orig_h)) ? 1 : 0;
+    transform->region = region;
+    transform->rotation = ((lcd_w > lcd_h) ^ (orig_w > orig_h)) ? 1 : 0;
+    transform->scaling = ((lcd_w != orig_w) || (lcd_h != orig_h));
 
-    ALOGI("Transforming FB (%dx%d) => (%dx%d) rot%d", orig_w, orig_h, lcd_w, lcd_h, display->transform.rotation);
+    ALOGI("Transforming FB (%dx%d) => (%dx%d) rot%d", orig_w, orig_h, lcd_w, lcd_h, transform->rotation);
 
     /* Reorientation matrix is:
        m = (center-from-target-center) * (scale-to-target) * (mirror) * (rotate) * (center-to-original-center) */
-    memcpy(display->transform.matrix, unit_matrix, sizeof(unit_matrix));
-    translate_matrix(display->transform.matrix, -(orig_w >> 1), -(orig_h >> 1));
-    rotate_matrix(display->transform.matrix, display->transform.rotation);
+    memcpy(transform->matrix, unit_matrix, sizeof(unit_matrix));
+    translate_matrix(transform->matrix, -(orig_w >> 1), -(orig_h >> 1));
+    rotate_matrix(transform->matrix, transform->rotation);
 
-    if (display->transform.rotation & 1)
+    if (transform->rotation & 1)
          SWAP(orig_w, orig_h);
 
-    scale_matrix(display->transform.matrix, orig_w, lcd_w, orig_h, lcd_h);
-    translate_matrix(display->transform.matrix, lcd_w >> 1, lcd_h >> 1);
+    scale_matrix(transform->matrix, orig_w, lcd_w, orig_h, lcd_h);
+    translate_matrix(transform->matrix, lcd_w >> 1, lcd_h >> 1);
+}
+
+static void set_external_display_transform_matrix(omap_hwc_device_t *hwc_dev, int disp)
+{
+    display_t *display = hwc_dev->displays[disp];
+    display_transform_t *transform = &display->transform;
+    int orig_xres = WIDTH(transform->region);
+    int orig_yres = HEIGHT(transform->region);
+    float orig_center_x = transform->region.left + orig_xres / 2.0f;
+    float orig_center_y = transform->region.top + orig_yres / 2.0f;
+
+    /* Reorientation matrix is:
+       m = (center-from-target-center) * (scale-to-target) * (mirror) * (rotate) * (center-to-original-center) */
+
+    memcpy(transform->matrix, unit_matrix, sizeof(unit_matrix));
+    translate_matrix(transform->matrix, -orig_center_x, -orig_center_y);
+    rotate_matrix(transform->matrix, transform->rotation);
+    if (transform->hflip)
+        scale_matrix(transform->matrix, 1, -1, 1, 1);
+
+    primary_display_t *primary = get_primary_display_info(hwc_dev);
+    if (!primary)
+        return;
+
+    float xpy = primary->xpy;
+
+    if (transform->rotation & 1) {
+        SWAP(orig_xres, orig_yres);
+        xpy = 1.0f / xpy;
+    }
+
+    /* get target size */
+    uint32_t adj_xres, adj_yres;
+    uint32_t width, height;
+    int xres, yres;
+
+    if (is_hdmi_display(hwc_dev, disp)) {
+        hdmi_display_t *hdmi = &((external_hdmi_display_t*)display)->hdmi;
+        width = hdmi->width;
+        height = hdmi->height;
+        xres = hdmi->mode_db[~hdmi->video_mode_ix].xres;
+        yres = hdmi->mode_db[~hdmi->video_mode_ix].yres;
+    } else {
+        display_config_t *config = &display->configs[display->active_config_ix];
+        width = 0;
+        height = 0;
+        xres = config->xres;
+        yres = config->yres;
+    }
+
+    display->transform.scaling = ((xres != orig_xres) || (yres != orig_yres));
+
+    get_max_dimensions(orig_xres, orig_yres, xpy,
+                       xres, yres, width, height,
+                       &adj_xres, &adj_yres);
+
+    scale_matrix(transform->matrix, orig_xres, adj_xres, orig_yres, adj_yres);
+    translate_matrix(transform->matrix, xres >> 1, yres >> 1);
 }
 
 static int free_tiler2d_buffers(external_hdmi_display_t *display)
@@ -295,6 +360,10 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
     if (err)
         return err;
 
+    primary_display_t *primary = get_primary_display_info(hwc_dev);
+    if (!primary)
+        return -ENODEV;
+
     err = allocate_display(sizeof(external_wfd_display_t), WFD_DISPLAY_CONFIGS, &hwc_dev->displays[disp]);
     if (err)
         return err;
@@ -305,7 +374,14 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
 
     display->type = DISP_TYPE_WFD;
     display->role = DISP_ROLE_EXTERNAL;
+    display->mode = DISP_MODE_INVALID;
     display->mgr_ix = 1;
+
+    external_display_t *ext = get_external_display_info(hwc_dev, disp);
+
+    ext->last_mode = DISP_MODE_INVALID;
+
+    display->transform.region = primary->mirroring_region;
 
     return 0;
 }
@@ -540,6 +616,34 @@ external_display_t *get_external_display_info(omap_hwc_device_t *hwc_dev, int di
         ext = &((external_wfd_display_t*)display)->ext;
 
     return ext;
+}
+
+int setup_external_display_transform(omap_hwc_device_t *hwc_dev, int disp)
+{
+    display_t *display = hwc_dev->displays[disp];
+
+    uint32_t xres = WIDTH(display->transform.region);
+    uint32_t yres = HEIGHT(display->transform.region);
+
+    if (!(xres && yres))
+        return -EINVAL;
+
+    int rot_flip = (yres > xres) ? 3 : 0;
+    display->transform.rotation = rot_flip & EXT_ROTATION;
+    display->transform.hflip = (rot_flip & EXT_HFLIP) > 0;
+
+    if (display->transform.rotation & 1)
+        SWAP(xres, yres);
+
+    if (is_hdmi_display(hwc_dev, disp)) {
+        primary_display_t *primary = get_primary_display_info(hwc_dev);
+        if (!primary || set_best_hdmi_mode(hwc_dev, disp, xres, yres, primary->xpy))
+            return -ENODEV;
+    }
+
+    set_external_display_transform_matrix(hwc_dev, disp);
+
+    return 0;
 }
 
 void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays) {

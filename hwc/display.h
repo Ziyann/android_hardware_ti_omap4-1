@@ -33,8 +33,8 @@ struct ion_handle;
 typedef struct omap_hwc_device omap_hwc_device_t;
 
 struct display_transform {
-    uint8_t rotation : 3;          /* 90-degree clockwise rotations */
-    uint8_t hflip    : 1;          /* flip l-r (after rotation) */
+    uint8_t rotation;       /* 90-degree clockwise rotations */
+    bool hflip;             /* flip l-r (after rotation) */
     bool scaling;
     hwc_rect_t region;
     float matrix[2][3];
@@ -182,6 +182,7 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev);
 external_display_t *get_external_display_info(omap_hwc_device_t *hwc_dev, int disp);
+int setup_external_display_transform(omap_hwc_device_t *hwc_dev, int disp);
 
 void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
 void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);

@@ -14,7 +14,11 @@
  * limitations under the License.
  */
 
+#include <stdint.h>
+
 #include "utils.h"
+
+#define ASPECT_RATIO_TOLERANCE 0.02f
 
 const transform_matrix unit_matrix = { { 1., 0., 0. }, { 0., 1., 0. } };
 
@@ -53,4 +57,31 @@ int round_float(float x)
 {
     /* int truncates towards 0 */
     return (int) (x < 0 ? x - 0.5 : x + 0.5);
+}
+
+void get_max_dimensions(uint32_t orig_xres, uint32_t orig_yres,
+                        float xpy,
+                        uint32_t scr_xres, uint32_t scr_yres,
+                        uint32_t scr_width, uint32_t scr_height,
+                        uint32_t *adj_xres, uint32_t *adj_yres)
+{
+    /* Assume full screen (largest size) */
+    *adj_xres = scr_xres;
+    *adj_yres = scr_yres;
+
+    /* Assume 1:1 pixel ratios if none supplied */
+    if (!scr_width || !scr_height) {
+        scr_width = scr_xres;
+        scr_height = scr_yres;
+    }
+
+    /* Trim to keep aspect ratio */
+    float x_factor = orig_xres * xpy * scr_height;
+    float y_factor = orig_yres *       scr_width;
+
+    /* Allow for tolerance so we avoid scaling if framebuffer is standard size */
+    if (x_factor < y_factor * (1.f - ASPECT_RATIO_TOLERANCE))
+        *adj_xres = (uint32_t) (x_factor * *adj_xres / y_factor + 0.5);
+    else if (x_factor * (1.f - ASPECT_RATIO_TOLERANCE) > y_factor)
+        *adj_yres = (uint32_t) (y_factor * *adj_yres / x_factor + 0.5);
 }
