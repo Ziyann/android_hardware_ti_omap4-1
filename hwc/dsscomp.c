@@ -247,5 +247,8 @@ uint32_t decide_dss_wb_capture_mode(uint32_t src_xres, uint32_t src_yres, uint32
         wb_mode = OMAP_WB_MEM2MEM_MODE;
     }
 
+    // HACK: Force MEM2MEM mode until switching between MEM2MEM and CAPTURE is properly supported
+    wb_mode = OMAP_WB_MEM2MEM_MODE;
+
     return wb_mode;
 }
