@@ -126,8 +126,8 @@ err_out:
     return err;
 }
 
-static int get_virtual_display_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents,
-        hwc_display_info_t *info)
+static int get_display_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents,
+                            hwc_display_info_t *info)
 {
     memset(info, 0, sizeof(*info));
     info->dpy = disp;
@@ -213,6 +213,30 @@ static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev, uint32_t xres, 
     return 0;
 }
 
+static void update_primary_display_orientation(omap_hwc_device_t *hwc_dev) {
+    display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    hwc_display_info_t display_info;
+
+    int err = get_display_info(hwc_dev, HWC_DISPLAY_PRIMARY, display->contents, &display_info);
+    if (err)
+        return;
+
+    primary_display_t *primary = get_primary_display_info(hwc_dev);
+    if (!primary)
+        return;
+
+    if (primary->orientation != display_info.orientation) {
+        primary->orientation = display_info.orientation;
+
+        int ext_disp = get_external_display_id(hwc_dev);
+        if (is_external_display_mirroring(hwc_dev, ext_disp)) {
+            external_display_t *ext = get_external_display_info(hwc_dev, ext_disp);
+            if (ext)
+                ext->update_transform = true;
+        }
+    }
+}
+
 static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
 {
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
@@ -291,6 +315,15 @@ static void set_external_display_transform_matrix(omap_hwc_device_t *hwc_dev, in
         height = 0;
         xres = config->xres;
         yres = config->yres;
+
+        if (is_wfd_display(hwc_dev, disp) && (primary->orientation & 1)) {
+            /*
+             * We are going to do rotation on WB overlay that uses TILER2D buffer. In case of 90
+             * degree rotation the cloned overlays should be placed on rotated view of the external
+             * display, so the external transform matrix has to be calculated accordingly.
+             */
+            SWAP(xres, yres);
+        }
     }
 
     display->transform.scaling = ((xres != orig_xres) || (yres != orig_yres));
@@ -356,7 +389,7 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
     int err;
 
     hwc_display_info_t display_info;
-    err = get_virtual_display_info(hwc_dev, disp, contents, &display_info);
+    err = get_display_info(hwc_dev, disp, contents, &display_info);
     if (err)
         return err;
 
@@ -379,9 +412,7 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
 
     external_display_t *ext = get_external_display_info(hwc_dev, disp);
 
-    ext->last_mode = DISP_MODE_INVALID;
-
-    display->transform.region = primary->mirroring_region;
+    ext->update_transform = true;
 
     // HACK: WFD display does not have its own FB device, so instead we use FB of external HDMI display
     hwc_dev->fb_dev[disp] = hwc_dev->fb_dev[HWC_DISPLAY_EXTERNAL];
@@ -437,6 +468,7 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
     display->fb_info = fb_info;
     display->role = DISP_ROLE_PRIMARY;
+    display->mode = DISP_MODE_PRESENTATION;
     display->mgr_ix = 0;
 
     set_primary_display_transform_matrix(hwc_dev);
@@ -565,7 +597,8 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
         }
     }
 
-    ext_hdmi->ext.last_mode = DISP_MODE_INVALID;
+    ext_hdmi->ext.update_transform = true;
+
     /* check set props */
     char value[PROPERTY_VALUE_MAX];
     property_get("persist.hwc.avoid_mode_change", value, "1");
@@ -737,7 +770,17 @@ void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_d
 
             gather_layer_statistics(hwc_dev, i);
 
-            display->mode = get_display_mode(hwc_dev, i);
+            if (i != HWC_DISPLAY_PRIMARY) {
+                uint32_t mode = get_display_mode(hwc_dev, i);
+
+                if (display->mode != mode) {
+                    display->mode = mode;
+
+                    external_display_t *ext = get_external_display_info(hwc_dev, i);
+                    if (ext)
+                        ext->update_transform = true;
+                }
+            }
         }
     }
 
@@ -745,6 +788,8 @@ void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_d
         if (hwc_dev->displays[i])
             hwc_dev->displays[i]->contents = NULL;
     }
+
+    update_primary_display_orientation(hwc_dev);
 }
 
 int get_external_display_id(omap_hwc_device_t *hwc_dev)

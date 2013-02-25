@@ -647,6 +647,17 @@ static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
         if (oi->cfg.wb_mode == OMAP_WB_MEM2MEM_MODE) {
             /* Video overlays will take care of scaling - no need to scale on WB */
             oi->cfg.crop = oi->cfg.win;
+
+            primary_display_t *primary = get_primary_display_info(hwc_dev);
+
+            if (primary) {
+                oi->cfg.rotation = primary->orientation;
+
+                if (primary->orientation & 1) {
+                    SWAP(oi->cfg.crop.x, oi->cfg.crop.y);
+                    SWAP(oi->cfg.crop.w, oi->cfg.crop.h);
+                }
+            }
         }
 
         dsscomp->num_ovls++;
@@ -726,7 +737,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 
     if (display->role == HWC_DISPLAY_EXTERNAL) {
         external_display_t *ext = get_external_display_info(hwc_dev, disp);
-        if (ext && ext->last_mode != display->mode) {
+        if (ext && ext->update_transform) {
             if (display->mode == DISP_MODE_PRESENTATION) {
                 display_config_t *config = &display->configs[display->active_config_ix];
                 struct hwc_rect src_region = { .right = config->xres, .bottom = config->yres };
@@ -739,7 +750,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
                 display->transform.region = primary->mirroring_region;
             }
             if (!setup_external_display_transform(hwc_dev, disp))
-                ext->last_mode = display->mode;
+                ext->update_transform = false;
         }
     }
 
