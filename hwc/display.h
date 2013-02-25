@@ -113,13 +113,14 @@ typedef struct display display_t;
 struct primary_display {
     bool use_sw_vsync;
 
+    uint32_t orientation;
     float xpy;                      /* pixel ratio for UI */
     hwc_rect_t mirroring_region;    /* region to mirror */
 };
 typedef struct primary_display primary_display_t;
 
 struct external_display {
-    uint32_t last_mode;    /* enum disp_mode */
+    bool update_transform;
 };
 typedef struct external_display external_display_t;
 
