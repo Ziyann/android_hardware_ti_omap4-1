@@ -1252,7 +1252,7 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
             uint32_t xres = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.width;
             uint32_t yres = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.height;
 
-            if (!init_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
+            if (init_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
                 return;
 
             primary_display_t *primary = get_primary_display_info(hwc_dev);
@@ -1513,7 +1513,7 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
         if (err)
             return err;
 
-        if (!hwc_mod->fb_dev) {
+        if (!hwc_mod->fb_dev[HWC_DISPLAY_PRIMARY]) {
             ALOGE("Framebuffer HAL not opened before HWC");
             return -EFAULT;
         }
