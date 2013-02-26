@@ -420,6 +420,27 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
     return 0;
 }
 
+static int update_virtual_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents)
+{
+    hwc_display_info_t display_info;
+    int err = get_display_info(hwc_dev, disp, contents, &display_info);
+    if (err)
+        return err;
+
+    display_t *display = hwc_dev->displays[disp];
+    display_config_t *config = &display->configs[display->active_config_ix];
+
+    if ((uint32_t)config->xres != display_info.width || (uint32_t)config->yres != display_info.height) {
+        setup_wfd_config(config, &display_info);
+
+        external_display_t *ext = get_external_display_info(hwc_dev, disp);
+        if (ext)
+            ext->update_transform = true;
+    }
+
+    return 0;
+}
+
 int init_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
 {
     hdmi_display_t *hdmi = (hdmi_display_t*)hwc_dev->displays[disp];
@@ -686,23 +707,30 @@ int setup_external_display_transform(omap_hwc_device_t *hwc_dev, int disp)
 
 void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays) {
     size_t i;
+    int err;
 
     if (num_displays > MAX_DISPLAYS)
         num_displays = MAX_DISPLAYS;
 
     for (i = HWC_DISPLAY_EXTERNAL + 1; i < num_displays; i++) {
-        if (displays[i] && !hwc_dev->displays[i]) {
-            int err = add_virtual_wfd_display(hwc_dev, i, displays[i]);
-            if (err)
-                ALOGE("Failed to connect virtual display %d (%d)", i, err);
-            else
-                ALOGI("Virtual display %d has been connected", i);
-        }
+        if (displays[i]) {
+            if (!hwc_dev->displays[i]) {
+                err = add_virtual_wfd_display(hwc_dev, i, displays[i]);
+                if (err)
+                    ALOGE("Failed to connect virtual display %d (%d)", i, err);
+                else
+                    ALOGI("Virtual display %d has been connected", i);
+            } else {
+                err = update_virtual_display(hwc_dev, i, displays[i]);
+                if (err)
+                    ALOGE("Failed to update virtual display %d (%d)", i, err);
+            }
+        } else {
+            if (hwc_dev->displays[i]) {
+                remove_display(hwc_dev, i);
 
-        if (!displays[i] && hwc_dev->displays[i]) {
-            remove_display(hwc_dev, i);
-
-            ALOGI("Virtual display %d has been disconnected", i);
+                ALOGI("Virtual display %d has been disconnected", i);
+            }
         }
     }
 }
