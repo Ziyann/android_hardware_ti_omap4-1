@@ -488,11 +488,13 @@ void reset_primary_display(omap_hwc_device_t *hwc_dev)
         return;
 
     /* Remove bootloader image from the screen as blank/unblank does not change the composition */
-    struct dsscomp_setup_dispc_data d = {
-        .num_mgrs = 1,
+    struct dsscomp_setup_dispc_data data = {
+        .num_mgrs = 1
     };
 
-    ret = ioctl(hwc_dev->dsscomp.fd, DSSCIOC_SETUP_DISPC, &d);
+    data.mgrs[0].alpha_blending = 1;
+
+    ret = ioctl(hwc_dev->dsscomp.fd, DSSCIOC_SETUP_DISPC, &data);
     if (ret)
         ALOGW("Failed to remove bootloader image");
 
