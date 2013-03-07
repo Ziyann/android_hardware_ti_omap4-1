@@ -733,7 +733,6 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     composition_t *comp = &display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
     layer_statistics_t *layer_stats = &display->layer_stats;
-    blitter_config_t *blitter = &hwc_dev->blitter;
 
     if (display->role == HWC_DISPLAY_EXTERNAL) {
         external_display_t *ext = get_external_display_info(hwc_dev, disp);
@@ -772,8 +771,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
      */
 
     /* Check if we can blit everything */
-    bool blit_all = (blitter->policy == BLT_POLICY_ALL) && (disp == HWC_DISPLAY_PRIMARY) &&
-            blit_layers(hwc_dev, list, 0);
+    bool blit_all = (get_blitter_policy(hwc_dev, disp) == BLT_POLICY_ALL) && blit_layers(hwc_dev, list, 0);
 
     if (blit_all) {
         comp->use_sgx = false;
@@ -795,7 +793,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 
     /* setup DSS overlays */
     int z = 0;
-    int fb_z = -1;
+    int fb_z = blit_all ? 0 : -1;
     bool scaled_gfx = false;
     uint32_t ovl_ix = comp->ovl_ix_base;
     uint32_t mem_used = 0;
@@ -888,7 +886,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     if (scaled_gfx)
         dsscomp->ovls[0].cfg.ix = ovl_ix;
 
-    if ((blitter->policy == BLT_POLICY_DEFAULT) && (disp == HWC_DISPLAY_PRIMARY)) {
+    if (get_blitter_policy(hwc_dev, disp) == BLT_POLICY_DEFAULT) {
         /*
          * As long as we keep blitting on consecutive frames keep the regionizer
          * state, if this is not possible the regionizer state is unreliable and
@@ -908,7 +906,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     if (needs_fb) {
         /* assign a z-layer for fb */
         if (fb_z < 0) {
-            if ((!blitter->policy) != BLT_POLICY_DISABLED && layer_stats->count)
+            if (layer_stats->count)
                 ALOGE("**** should have assigned z-layer for fb");
             fb_z = z++;
         }
