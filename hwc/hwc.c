@@ -837,19 +837,18 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
             /* render via DSS overlay */
             mem_used += get_required_mem1d_size(layer);
             layer->compositionType = HWC_OVERLAY;
+
             /*
-             * This hint will not be used in vanilla ICS, but maybe in
-             * JellyBean, it is useful to distinguish between blts and true
-             * overlays
+             * This hint will not be used in vanilla ICS, but maybe in JellyBean,
+             * it is useful to distinguish between blts and true overlays.
              */
             layer->hints |= HWC_HINT_TRIPLE_BUFFER;
 
-            /* clear FB above all opaque layers if rendering via SGX */
+            /* Clear FB above all opaque layers if rendering via SGX */
             if (comp->use_sgx && !is_blended_layer(layer))
                 layer->hints |= HWC_HINT_CLEAR_FB;
 
             comp->buffers[comp->num_buffers] = layer->handle;
-            //ALOGI("dss buffers[%d] = %p", comp->num_buffers, comp->buffers[comp->num_buffers]);
 
             adjust_overlay_to_layer(hwc_dev, &dsscomp->ovls[dsscomp->num_ovls], layer, z);
 
@@ -858,17 +857,14 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
             dsscomp->ovls[dsscomp->num_ovls].addressing = OMAP_DSS_BUFADDR_LAYER_IX;
             dsscomp->ovls[dsscomp->num_ovls].ba = comp->num_buffers;
 
-            if (disp == HWC_DISPLAY_PRIMARY) {
-                /* ensure GFX layer is never scaled */
-                if ((dsscomp->num_ovls == 0) && (!hwc_dev->displays[HWC_DISPLAY_PRIMARY]->transform.scaling)) {
-                    scaled_gfx = is_scaled_layer(layer) || is_nv12_layer(layer);
-                } else if (scaled_gfx && !is_scaled_layer(layer) && !is_nv12_layer(layer)) {
-                    /* swap GFX layer with this one */
-                    uint32_t temp = dsscomp->ovls[dsscomp->num_ovls].cfg.ix;
-                    dsscomp->ovls[dsscomp->num_ovls].cfg.ix = dsscomp->ovls[0].cfg.ix;
-                    dsscomp->ovls[0].cfg.ix = temp;
-                    scaled_gfx = 0;
-                }
+            /* Ensure GFX overlay is never scaled */
+            if (ovl_ix == OMAP_DSS_GFX) {
+                scaled_gfx = is_scaled_layer(layer) || is_nv12_layer(layer);
+            } else if (scaled_gfx && !is_scaled_layer(layer) && !is_nv12_layer(layer)) {
+                /* Swap GFX overlay with this one. If GFX is used it's always at index 0. */
+                dsscomp->ovls[dsscomp->num_ovls].cfg.ix = dsscomp->ovls[0].cfg.ix;
+                dsscomp->ovls[0].cfg.ix = ovl_ix;
+                scaled_gfx = false;
             }
 
             dsscomp->num_ovls++;
@@ -888,8 +884,8 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         }
     }
 
-    /* if scaling GFX (e.g. only 1 scaled surface) use a VID pipe */
-    if (scaled_gfx && disp == HWC_DISPLAY_PRIMARY)
+    /* If scaling GFX (e.g. only 1 scaled surface) use a VID overlay */
+    if (scaled_gfx)
         dsscomp->ovls[0].cfg.ix = ovl_ix;
 
     if ((blitter->policy == BLT_POLICY_DEFAULT) && (disp == HWC_DISPLAY_PRIMARY)) {
