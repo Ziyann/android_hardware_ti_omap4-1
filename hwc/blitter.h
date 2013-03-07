@@ -55,6 +55,7 @@ struct blitter_composition {
 typedef struct blitter_composition blitter_composition_t;
 
 int init_blitter(omap_hwc_device_t *hwc_dev);
+uint32_t get_blitter_policy(omap_hwc_device_t *hwc_dev, int disp);
 void reset_blitter(omap_hwc_device_t *hwc_dev);
 void release_blitter(void);
 bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents, int buf_offset);

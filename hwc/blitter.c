@@ -72,6 +72,30 @@ int init_blitter(omap_hwc_device_t *hwc_dev)
     return err;
 }
 
+uint32_t get_blitter_policy(omap_hwc_device_t *hwc_dev, int disp)
+{
+    /*
+     * Since we have only one set of framebuffers allocated in kernel, blitter is used only on
+     * a single (primary) display.
+     */
+    if (disp != HWC_DISPLAY_PRIMARY)
+        return BLT_POLICY_DISABLED;
+
+    /*
+     * WORKAROUND: Do not blit on idle timeout. DSS consumes more power when reading from blitter
+     * FB (VRAM), than when reading from SGX FB (Tiler2D). To minimize the power consumption idle
+     * frames should be composed entirely by SGX.
+     */
+    if (hwc_dev->force_sgx)
+        return BLT_POLICY_DISABLED;
+
+    /* WORKAROUND: Currently blitter is supported only for single display scenarios. */
+    if (get_external_display_id(hwc_dev) >= 0)
+        return BLT_POLICY_DISABLED;
+
+    return hwc_dev->blitter.policy;
+}
+
 void reset_blitter(omap_hwc_device_t *hwc_dev)
 {
     /* Blitter is used only in primary display composition */
@@ -90,10 +114,7 @@ void release_blitter(void)
 
 bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents, int buf_offset)
 {
-    /* Do not blit if this frame will be composed entirely by the GPU.
-     * Currently blitter is supported only for single display scenarios.
-     */
-    if (!contents || hwc_dev->force_sgx || get_external_display_id(hwc_dev) >= 0)
+    if (!contents)
         goto err_out;
 
     blitter_config_t *blitter = &hwc_dev->blitter;
