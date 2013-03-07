@@ -683,6 +683,7 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
 {
     display_t *display = hwc_dev->displays[disp];
     wfd_display_t *wfd = is_wfd_display(hwc_dev, disp) ? (wfd_display_t*)display : NULL;
+    hdmi_display_t *hdmi = is_hdmi_display(hwc_dev, disp) ? (hdmi_display_t*)display : NULL;
     hwc_display_contents_1_t *list = display->contents;
 
     /* Mirror the layers using primary display composition */
@@ -703,6 +704,10 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
         setup_wb_capture(hwc_dev, disp);
         return;
     }
+
+    /* If display is not configured drop compositions */
+    if (hdmi && hdmi->video_mode_ix == 0)
+        return;
 
     /* Mirror all layers */
     for (ix = 0; ix < comp->used_ovls; ix++) {
@@ -729,6 +734,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         return 0;
 
     display_t *display = hwc_dev->displays[disp];
+    hdmi_display_t *hdmi = is_hdmi_display(hwc_dev, disp) ? (hdmi_display_t*)display : NULL;
     hwc_display_contents_1_t *list = display->contents;
     composition_t *comp = &display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
@@ -788,7 +794,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         }
     }
 
-    if (is_hdmi_display(hwc_dev, disp))
+    if (hdmi)
         comp->swap_rb = 0; /* hdmi manager doesn't support R&B swap */
 
     /* setup DSS overlays */
@@ -959,15 +965,9 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     if (is_wfd_display(hwc_dev, disp))
         setup_wb_capture(hwc_dev, disp);
 
-    /*
-     * Whilst the mode of the display is being changed drop compositions to the
-     * display
-     */
-    if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
-        hdmi_display_t *hdmi = (hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_PRIMARY];
-        if (hdmi->video_mode_ix == 0)
-            dsscomp->num_ovls = 0;
-    }
+    /* If display is not configured drop compositions */
+    if (hdmi && hdmi->video_mode_ix == 0)
+        dsscomp->num_ovls = 0;
 
     if (debug) {
         ALOGD("prepare (%d) - %s (layers=%d, comp=%d/%d scaled, RGB=%d,BGR=%d,NV12=%d) (ext=%s%s%ddeg%s %dex/%dmx (last %dex,%din)\n",
