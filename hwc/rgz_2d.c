@@ -1156,6 +1156,14 @@ static int rgz_in_hwccheck(rgz_in_params_t *p, rgz_t *rgz)
      */
     int l, memidx = 0;
     for (l = 0; l < layerno; l++) {
+        /*
+         * Workaround: If a NV12 layer is present in the list, don't even try
+         * to blit. There is a performance degradation while playing video and
+         * using GC at the same time.
+         */
+        if (!(layers[l].flags & HWC_SKIP_LAYER) && layers[l].handle && is_nv12_layer(&layers[l]))
+            return -1;
+
         if (layers[l].compositionType == HWC_OVERLAY)
             memidx++;
     }
