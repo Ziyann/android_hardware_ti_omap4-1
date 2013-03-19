@@ -277,15 +277,18 @@ status_t DSSWBHal::dequeue(int wbHandle, int *bufIndex) {
     it = mDequeueList.begin();
     *bufIndex = *it;
 
-    if (ioctl(mDssCompFd, DSSCIOC_WB_DONE, &mBufferSlots[*bufIndex].syncId)) {
-        ALOGW("timed out waiting for WB operation to complete");
+    int err = NO_ERROR;
+    if (mBufferSlots[*bufIndex].syncId != 0) {
+        err = ioctl(mDssCompFd, DSSCIOC_WB_DONE, &mBufferSlots[*bufIndex].syncId);
+        if (err)
+            ALOGW("Timed out waiting for WB operation to complete (%d)", err);
     }
 
     mDequeueList.erase(it);
     mBufferSlots.editItemAt(*bufIndex).state = BufferSlot::DEQUEUED;
     ALOGV("WBHal::dequeue index %d status %d", *bufIndex, BufferSlot::DEQUEUED);
 
-    return NO_ERROR;
+    return err;
 }
 
 status_t DSSWBHal::cancelBuffer(int wbHandle, int *bufIndex) {
