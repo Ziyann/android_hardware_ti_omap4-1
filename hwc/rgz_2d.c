@@ -33,6 +33,7 @@
 #include <hardware/hwcomposer.h>
 
 #include "hwc_dev.h"
+#include "color_fmt.h"
 
 static int rgz_handle_to_stride(IMG_native_handle_t *h);
 #define BVDUMP(p,t,parms)
@@ -1503,8 +1504,7 @@ static BVFN_BLT bv_blt;
 
 static int rgz_handle_to_stride(IMG_native_handle_t *h)
 {
-    int bpp = is_NV12(h->iFormat) ? 0 : (h->iFormat == HAL_PIXEL_FORMAT_RGB_565 ? 2 : 4);
-    int stride = ALIGN(h->iWidth, HW_ALIGN) * bpp;
+    int stride = ALIGN(h->iWidth, HW_ALIGN) * get_format_bpp(h->iFormat) / 8;
     return stride;
 }
 
