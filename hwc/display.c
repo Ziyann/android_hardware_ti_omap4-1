@@ -36,6 +36,7 @@
 
 
 #include "hwc_dev.h"
+#include "color_fmt.h"
 #include "display.h"
 #include "layer.h"
 #include "sw_vsync.h"
@@ -409,7 +410,7 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
     display->role = DISP_ROLE_EXTERNAL;
     display->mode = DISP_MODE_INVALID;
     display->mgr_ix = 1;
-    display->blanked = false;
+    display->blanked = hwc_dev->displays[HWC_DISPLAY_PRIMARY]->blanked;
 
     external_display_t *ext = get_external_display_info(hwc_dev, disp);
 
@@ -440,6 +441,62 @@ static int update_virtual_display(omap_hwc_device_t *hwc_dev, int disp, hwc_disp
     }
 
     return 0;
+}
+
+static int capture_black_frame(omap_hwc_device_t *hwc_dev, int disp)
+{
+    wfd_display_t *wfd = (wfd_display_t *)hwc_dev->displays[disp];
+    int attempt = 0;
+    int got_buffer;
+    int err;
+
+    while (!(got_buffer = wb_capture_layer(&wfd->wb_layer)) && attempt < 5) {
+        struct timespec sleep_time;
+        sleep_time.tv_sec = 0;
+        sleep_time.tv_nsec = 10000000; /* 10ms */
+        nanosleep(&sleep_time, NULL);
+    }
+
+    if (!got_buffer || !wfd->wb_layer.handle) {
+        ALOGE("Failed get a buffer");
+        return -ENODEV;
+    }
+
+    gralloc_module_t *gralloc_module;
+    hwc_layer_1_t *layer = &wfd->wb_layer;
+    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
+    void *buffer_ptr[MAX_SUB_ALLOCS] = {0};
+
+    err = hw_get_module(GRALLOC_HARDWARE_MODULE_ID, (hw_module_t const **)&gralloc_module);
+    ALOGE_IF(err, "Failed to get gralloc module instance (%d)", err);
+
+    if (!err) {
+        err = gralloc_module->lock(gralloc_module, layer->handle, GRALLOC_USAGE_SW_WRITE_RARELY,
+                0, 0, handle->iWidth, handle->iHeight, (void **)buffer_ptr);
+        ALOGE_IF(err, "Failed to lock buffer %p (%d)", layer->handle, err);
+    }
+
+    if (!err) {
+        int stride = get_stride_from_format(handle->iFormat, handle->iWidth);
+        int i;
+
+        for (i = 0; i < handle->iHeight; i++) {
+            char *line = (char *)buffer_ptr[0] + i * stride;
+            memset(line, 0x00, handle->iWidth);
+        }
+
+        for (i = 0; i < handle->iHeight / 2; i++) {
+            char *line = (char *)buffer_ptr[0] + (handle->iHeight + i) * stride;
+            memset(line, 0x80, handle->iWidth);
+        }
+
+        err = gralloc_module->unlock(gralloc_module, layer->handle);
+        ALOGE_IF(err, "Failed to unlock buffer %p (%d)", layer->handle, err);
+    }
+
+    wb_capture_started(layer->handle, 0);
+
+    return err;
 }
 
 int init_hdmi_display(omap_hwc_device_t *hwc_dev, int disp)
@@ -970,6 +1027,7 @@ int blank_display(omap_hwc_device_t *hwc_dev, int disp)
             err = -ENODEV;
         break;
     case DISP_TYPE_WFD:
+        err = capture_black_frame(hwc_dev, disp);
         break;
     default:
         err = -ENODEV;
