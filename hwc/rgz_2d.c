@@ -34,9 +34,11 @@
 
 #include "hwc_dev.h"
 #include "hal_public.h"
+#include "layer.h"
 #include "color_fmt.h"
 #include "utils.h"
 #include "layer.h"
+#include "dump.h"
 
 #define BVDUMP(p,t,parms)
 #define DSTSTRIDE(dstgeom) dstgeom->virtstride
@@ -65,7 +67,8 @@ static void rgz_get_src_rect(hwc_layer_1_t* layer, blit_rect_t *subregion_rect, 
 static int rgz_get_orientation(unsigned int transform);
 static int rgz_get_flip_flags(unsigned int transform, int use_src2_flags);
 
-int debug = 0;
+static int debug = 0;
+static int debug_trace = 0;
 struct rgz_blts blts;
 /* Represents a screen sized background layer */
 static hwc_layer_1_t bg_layer;
@@ -186,43 +189,13 @@ static void rgz_out_svg(rgz_t *rgz, rgz_out_params_t *params)
     svgout_footer();
 }
 
-/* XXX duplicate of hwc.c version */
-static void dump_layer(hwc_layer_1_t const* l, int iserr)
-{
-#define FMT(f) ((f) == HAL_PIXEL_FORMAT_TI_NV12 ? "NV12" : \
-                (f) == HAL_PIXEL_FORMAT_BGRX_8888 ? "xRGB32" : \
-                (f) == HAL_PIXEL_FORMAT_RGBX_8888 ? "xBGR32" : \
-                (f) == HAL_PIXEL_FORMAT_BGRA_8888 ? "ARGB32" : \
-                (f) == HAL_PIXEL_FORMAT_RGBA_8888 ? "ABGR32" : \
-                (f) == HAL_PIXEL_FORMAT_RGB_565 ? "RGB565" : "??")
-
-    OUTE("%stype=%d, flags=%08x, handle=%p, tr=%02x, blend=%04x, {%d,%d,%d,%d}, {%d,%d,%d,%d}",
-            iserr ? ">>  " : "    ",
-            l->compositionType, l->flags, l->handle, l->transform, l->blending,
-            l->sourceCrop.left,
-            l->sourceCrop.top,
-            l->sourceCrop.right,
-            l->sourceCrop.bottom,
-            l->displayFrame.left,
-            l->displayFrame.top,
-            l->displayFrame.right,
-            l->displayFrame.bottom);
-    if (l->handle) {
-        IMG_native_handle_t *h = (IMG_native_handle_t *)l->handle;
-        OUTE("%s%d*%d(%s)",
-            iserr ? ">>  " : "    ",
-            h->iWidth, h->iHeight, FMT(h->iFormat));
-        OUTE("hndl %p", l->handle);
-    }
-}
-
 static void dump_all(rgz_layer_t *rgz_layers, unsigned int layerno, unsigned int errlayer)
 {
     unsigned int i;
     for (i = 0; i < layerno; i++) {
         hwc_layer_1_t *l = &rgz_layers[i].hwc_layer;
         OUTE("Layer %d", i);
-        dump_layer(l, errlayer == i);
+        dump_layer_ext(l, errlayer == i);
     }
 }
 
@@ -886,11 +859,20 @@ static void rgz_gen_blitregions(rgz_t *rgz, blit_hregion_t *hregion, int screen_
 static int rgz_in_valid_hwc_layer(hwc_layer_1_t *layer)
 {
     IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
-    if ((layer->flags & HWC_SKIP_LAYER) || !handle)
+    if (layer->flags & HWC_SKIP_LAYER) {
+        ALOGI_IF(debug_trace, "regionizer: layer is invalid due to HWC_SKIP_LAYER flag");
         return 0;
+    }
 
-    if (is_nv12_format(handle->iFormat))
+    if (!handle) {
+        ALOGI_IF(debug_trace, "regionizer: layer is invalid due to NULL handle");
+        return 0;
+    }
+
+    if (is_nv12_format(handle->iFormat)) {
+        ALOGI_IF(debug_trace, "regionizer: layer is valid");
         return 1;
+    }
 
     /* FIXME: The following must be removed when GC supports vertical/horizontal
      * buffer flips, please note having a FLIP_H and FLIP_V means 180 rotation
@@ -912,8 +894,11 @@ static int rgz_in_valid_hwc_layer(hwc_layer_1_t *layer)
     case HAL_PIXEL_FORMAT_BGRA_8888:
         break;
     default:
+        ALOGI_IF(debug_trace, "regionizer: layer is invalid due to unsupported pixel format %s", HAL_FMT(handle->iFormat));
         return 0;
     }
+
+    ALOGI_IF(debug_trace, "regionizer: layer is valid");
     return 1;
 }
 
@@ -1154,11 +1139,16 @@ static int rgz_in_hwccheck(rgz_in_params_t *p, rgz_t *rgz)
 
     rgz->state &= ~RGZ_STATE_INIT;
 
-    if (!layers)
+    if (!layers) {
+        ALOGI_IF(debug_trace, "regionizer: skipped blit check due to empty layer list");
         return -1;
+    }
+
 
     /* For debugging */
-    //dump_all(layers, layerno, 0);
+    if (debug) {
+        dump_layers_ext(layers, layerno, 0);
+    }
 
     /*
      * Store buffer index to be sent in the HWC Post2 list. Any overlay
@@ -1215,8 +1205,15 @@ static int rgz_in_hwccheck(rgz_in_params_t *p, rgz_t *rgz)
         }
     }
 
-    if (!possible_blit || possible_blit != candidates)
+    if (!possible_blit) {
+        ALOGI_IF(debug_trace, "regionizer: no possible blits found");
         return -1;
+    }
+
+    if (possible_blit != candidates) {
+        ALOGI_IF(debug_trace, "regionizer: blit number differs from candidate number, some layers were skipped");
+        return -1;
+    }
 
     rgz->state |= RGZ_STATE_INIT;
     cur_fb_state->rgz_layerno = possible_blit + 1; /* Account for background layer */
@@ -1881,6 +1878,11 @@ int rgz_get_screengeometry(int fd, struct bvsurfgeom *geom, int fmt)
     geom->format = convert_hal_to_ocd_format(fmt);
     geom->orientation = 0;
     return 0;
+}
+
+void rgz_enable_debug_trace(int enable)
+{
+    debug_trace = enable;
 }
 
 int rgz_in(rgz_in_params_t *p, rgz_t *rgz)
