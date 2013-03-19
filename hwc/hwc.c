@@ -1505,11 +1505,27 @@ static int hwc_blank(struct hwc_composer_device_1 *dev, int disp, int blank)
      * No need to do anything here except updating the display state.
      */
     display_t *display = hwc_dev->displays[disp];
+    int err = 0;
+
     display->blanked = blank;
+
+    if (disp == HWC_DISPLAY_PRIMARY) {
+        int ext_disp = get_external_display_id(hwc_dev);
+        if (is_wfd_display(hwc_dev, ext_disp)) {
+            /*
+             * SurfaceFlinger doesn't issues blanking commands for virtual displays. In order to
+             * simulate blanking of WFD display we need to call blank_display() explicitly.
+             */
+            if (blank)
+                err = blank_display(hwc_dev, ext_disp);
+            else
+                err = unblank_display(hwc_dev, ext_disp);
+        }
+    }
 
     pthread_mutex_unlock(&hwc_dev->lock);
 
-    return 0;
+    return err;
 }
 
 static int hwc_getDisplayConfigs(struct hwc_composer_device_1* dev, int disp, uint32_t* configs, size_t* numConfigs)
