@@ -28,6 +28,8 @@
 #define WIDTH(rect) ((rect).right - (rect).left)
 #define HEIGHT(rect) ((rect).bottom - (rect).top)
 
+#define RECT_INTERSECTS(a, b) (((a).bottom > (b).top) && ((a).top < (b).bottom) && ((a).right > (b).left) && ((a).left < (b).right))
+
 typedef float transform_matrix[2][3];
 
 extern const transform_matrix unit_matrix;

@@ -43,7 +43,10 @@ bool is_valid_format(uint32_t format);
 bool is_rgb_format(uint32_t format);
 bool is_bgr_format(uint32_t format);
 bool is_nv12_format(uint32_t format);
+bool is_opaque_format(uint32_t format);
 uint32_t get_format_bpp(uint32_t format);
 uint32_t convert_hal_to_dss_format(uint32_t format, bool blended);
+uint32_t convert_hal_to_ocd_format(uint32_t hal_format);
+uint32_t get_stride_from_format(uint32_t format, uint32_t width);
 
 #endif
