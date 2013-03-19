@@ -20,6 +20,7 @@
 #include <cutils/log.h>
 
 #include <linux/types.h>
+#include <linux/bltsville.h>
 #include <video/dsscomp.h>
 
 #include "hal_public.h"
@@ -70,6 +71,18 @@ bool is_nv12_format(uint32_t format)
     switch (format) {
     case HAL_PIXEL_FORMAT_TI_NV12:
     case HAL_PIXEL_FORMAT_TI_NV12_1D:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool is_opaque_format(uint32_t format)
+{
+    switch (format) {
+    case HAL_PIXEL_FORMAT_RGB_565:
+    case HAL_PIXEL_FORMAT_RGBX_8888:
+    case HAL_PIXEL_FORMAT_BGRX_8888:
         return true;
     default:
         return false;
@@ -128,3 +141,32 @@ uint32_t convert_hal_to_dss_format(uint32_t hal_format, bool blended)
     return dss_format;
 }
 
+uint32_t convert_hal_to_ocd_format(uint32_t hal_format)
+{
+    /* convert color format */
+    switch(hal_format) {
+    case HAL_PIXEL_FORMAT_BGRA_8888:
+        return OCDFMT_BGRA24;
+    case HAL_PIXEL_FORMAT_BGRX_8888:
+        return OCDFMT_BGR124;
+    case HAL_PIXEL_FORMAT_RGB_565:
+        return OCDFMT_RGB16;
+    case HAL_PIXEL_FORMAT_RGBA_8888:
+        return OCDFMT_RGBA24;
+    case HAL_PIXEL_FORMAT_RGBX_8888:
+        return OCDFMT_RGB124;
+    case HAL_PIXEL_FORMAT_TI_NV12:
+    case HAL_PIXEL_FORMAT_TI_NV12_1D:
+        return OCDFMT_NV12;
+    case HAL_PIXEL_FORMAT_YV12:
+        return OCDFMT_YV12;
+    default:
+        ALOGV("Unsupported pixel format");
+        return OCDFMT_UNKNOWN;
+    }
+}
+
+uint32_t get_stride_from_format(uint32_t format, uint32_t width)
+{
+    return ALIGN(width, HW_ALIGN) * get_format_bpp(format) / 8;
+}

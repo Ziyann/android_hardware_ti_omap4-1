@@ -99,7 +99,7 @@ static void setup_overlay(int index, uint32_t format, bool blended,
 
     oc->width = width;
     oc->height = height;
-    oc->stride = ALIGN(width, HW_ALIGN) * get_format_bpp(format) / 8;
+    oc->stride = get_stride_from_format(format, width);
 
     oc->enabled = 1;
     oc->global_alpha = 255;
