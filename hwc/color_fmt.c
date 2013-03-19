@@ -168,5 +168,9 @@ uint32_t convert_hal_to_ocd_format(uint32_t hal_format)
 
 uint32_t get_stride_from_format(uint32_t format, uint32_t width)
 {
-    return ALIGN(width, HW_ALIGN) * get_format_bpp(format) / 8;
+    /*
+     * NV12 buffers are allocated in Tiler2D space as collections of 4096 byte cells,
+     * so there is no need for calculation with regards to their width.
+     */
+    return is_nv12_format(format) ? 4096 : ALIGN(width, HW_ALIGN) * get_format_bpp(format) / 8;
 }
