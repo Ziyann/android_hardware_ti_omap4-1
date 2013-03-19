@@ -109,12 +109,32 @@ void dump_display(omap_hwc_device_t *hwc_dev, dump_buf_t *log, int disp)
     }
 }
 
-void dump_layer(const hwc_layer_1_t *l)
+void dump_layer(const hwc_layer_1_t *layer)
 {
-    ALOGD("\ttype=%d, flags=%08x, handle=%p, tr=%02x, blend=%04x, {%d,%d,%d,%d}, {%d,%d,%d,%d}",
-         l->compositionType, l->flags, l->handle, l->transform, l->blending,
-         l->sourceCrop.left, l->sourceCrop.top, l->sourceCrop.right, l->sourceCrop.bottom,
-         l->displayFrame.left, l->displayFrame.top, l->displayFrame.right, l->displayFrame.bottom);
+    dump_layer_ext(layer, false);
+}
+
+void dump_layer_ext(const hwc_layer_1_t *layer, bool invalid_layer)
+{
+    ALOGD("\t%stype=%d, flags=%08x, handle=%p, tr=%02x, blend=%04x, {%d,%d,%d,%d}, {%d,%d,%d,%d}",
+         invalid_layer ? ">> " : "",
+         layer->compositionType, layer->flags, layer->handle, layer->transform, layer->blending,
+         layer->sourceCrop.left, layer->sourceCrop.top, layer->sourceCrop.right, layer->sourceCrop.bottom,
+         layer->displayFrame.left, layer->displayFrame.top, layer->displayFrame.right, layer->displayFrame.bottom);
+    if (layer->handle) {
+        IMG_native_handle_t *h = (IMG_native_handle_t *)layer->handle;
+        ALOGD("%s%d*%d(%s)", invalid_layer ? "\t>> " : "\t   ", h->iWidth, h->iHeight, HAL_FMT(h->iFormat));
+    }
+}
+
+void dump_layers_ext(const hwc_layer_1_t *list, uint32_t num_layers, uint32_t invalid_layer_ix)
+{
+    uint32_t i;
+    for (i = 0; i < num_layers; i++) {
+        const hwc_layer_1_t *layer = &list[i];
+        ALOGD("Layer %d", i);
+        dump_layer_ext(layer, invalid_layer_ix == i);
+    }
 }
 
 void dump_set_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *list)

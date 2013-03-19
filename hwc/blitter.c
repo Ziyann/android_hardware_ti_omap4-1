@@ -43,8 +43,6 @@ int init_blitter(omap_hwc_device_t *hwc_dev)
     blitter_config_t *blitter = &hwc_dev->blitter;
     int err = 0;
 
-    blitter->debug = false;
-
     int gc2d_fd = open("/dev/gcioctl", O_RDWR);
     if (gc2d_fd < 0) {
         ALOGI("Unable to open gc-core device (%d), blits disabled", errno);
@@ -61,6 +59,11 @@ int init_blitter(omap_hwc_device_t *hwc_dev)
 
         ALOGI("blitter present, blits mode %d, blits policy %d", blitter->mode, blitter->policy);
 
+        property_get("persist.hwc.bltdebug", value, "0");
+        blitter->debug = atoi(value);
+
+        rgz_enable_debug_trace(blitter->debug);
+
         close(gc2d_fd);
 
         if (rgz_get_screengeometry(hwc_dev->fb_fd[HWC_DISPLAY_PRIMARY], &gscrngeom,
@@ -74,24 +77,31 @@ int init_blitter(omap_hwc_device_t *hwc_dev)
 
 uint32_t get_blitter_policy(omap_hwc_device_t *hwc_dev, int disp)
 {
+    blitter_config_t *blitter = &hwc_dev->blitter;
     /*
      * Since we have only one set of framebuffers allocated in kernel, blitter is used only on
      * a single (primary) display.
      */
-    if (disp != HWC_DISPLAY_PRIMARY)
+    if (disp != HWC_DISPLAY_PRIMARY) {
+        ALOGI_IF(blitter->debug, "blitter: turning off for non-primary display");
         return BLT_POLICY_DISABLED;
+    }
 
     /*
      * WORKAROUND: Do not blit on idle timeout. DSS consumes more power when reading from blitter
      * FB (VRAM), than when reading from SGX FB (Tiler2D). To minimize the power consumption idle
      * frames should be composed entirely by SGX.
      */
-    if (hwc_dev->force_sgx)
+    if (hwc_dev->force_sgx) {
+        ALOGI_IF(blitter->debug, "blitter: turning off due to forced SGX composition");
         return BLT_POLICY_DISABLED;
+    }
 
     /* WORKAROUND: Currently blitter is supported only for single display scenarios. */
-    if (get_external_display_id(hwc_dev) >= 0)
+    if (get_external_display_id(hwc_dev) >= 0) {
+        ALOGI_IF(blitter->debug, "blitter: turning off due to external display present");
         return BLT_POLICY_DISABLED;
+    }
 
     return hwc_dev->blitter.policy;
 }
@@ -114,10 +124,14 @@ void release_blitter(void)
 
 bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents, int buf_offset)
 {
-    if (!contents)
-        goto err_out;
-
     blitter_config_t *blitter = &hwc_dev->blitter;
+    ALOGI_IF(blitter->debug, "blitter: trying to blit layers");
+
+    if (!contents) {
+        ALOGI_IF(blitter->debug, "blitter: skipped blitting due to empty layer list");
+        goto err_out;
+    }
+
     int rgz_in_op;
     int rgz_out_op;
 
@@ -145,12 +159,16 @@ bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents,
      * operation is supported
      */
     if (!(contents->flags & HWC_EXTENDED_API) || !hwc_dev->procs ||
-        hwc_dev->procs->extension_cb(hwc_dev->procs, HWC_EXTENDED_OP_LAYERDATA, NULL, -1) != 0)
+        hwc_dev->procs->extension_cb(hwc_dev->procs, HWC_EXTENDED_OP_LAYERDATA, NULL, -1) != 0) {
+        ALOGI_IF(blitter->debug, "blitter: skipped blitting due to unsupported operation");
         goto err_out;
+    }
 
     /* Check if we have enough space in the extended layer list */
-    if ((sizeof(hwc_layer_extended_t) * num_layers) > sizeof(grgz_ext_layer_list))
+    if ((sizeof(hwc_layer_extended_t) * num_layers) > sizeof(grgz_ext_layer_list)) {
+        ALOGI_IF(blitter->debug, "blitter: skipped blitting due to insufficient memory for extended layer list");
         goto err_out;
+    }
 #endif
     uint32_t i;
 #ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
@@ -158,8 +176,10 @@ bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents,
         hwc_layer_extended_t *ext_layer = &grgz_ext_layer_list.layers[i];
         ext_layer->idx = i;
         if (hwc_dev->procs->extension_cb(hwc_dev->procs, HWC_EXTENDED_OP_LAYERDATA,
-            (void **) &ext_layer, sizeof(hwc_layer_extended_t)) != 0)
+            (void **) &ext_layer, sizeof(hwc_layer_extended_t)) != 0) {
+            ALOGI_IF(blitter->debug, "blitter: skipped blitting due to unsupported operation on layer");
             goto err_out;
+        }
     }
 #endif
 
@@ -181,8 +201,10 @@ bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents,
      * This means if all the layers marked for the FRAMEBUFFER cannot be
      * blitted, do not blit, for e.g. SKIP layers
      */
-    if (rgz_in(&in, &grgz) != RGZ_ALL)
+    if (rgz_in(&in, &grgz) != RGZ_ALL) {
+        ALOGI_IF(blitter->debug, "blitter: skipped blitting because we cannot blit some of the requested layers");
         goto err_out;
+    }
 
     uint32_t count = 0;
     for (i = 0; i < num_layers; i++) {
@@ -231,7 +253,7 @@ bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents,
     struct rgz_blt_entry *res_blit_ops = (struct rgz_blt_entry *) out.data.bvc.cmdp;
     memcpy(comp->comp_data.blit_data.rgz_blts, res_blit_ops, sizeof(*res_blit_ops) * out.data.bvc.cmdlen);
 
-    ALOGI_IF(blitter->debug, "blt struct sz %d", sizeof(*res_blit_ops) * out.data.bvc.cmdlen);
+    ALOGI_IF(blitter->debug, "blitter: blt struct sz %d", sizeof(*res_blit_ops) * out.data.bvc.cmdlen);
     ALOGE_IF(comp->blitter.num_blits != (uint32_t)out.data.bvc.cmdlen, "blit_num != out.data.bvc.cmdlen, %d != %d",
             comp->blitter.num_blits, out.data.bvc.cmdlen);
 
@@ -246,9 +268,11 @@ bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents,
         contents->hwLayers[i].hints &= ~HWC_HINT_CLEAR_FB;
     }
 
+    ALOGI_IF(blitter->debug, "blitter: layers were blitted successfully");
     return true;
 
 err_out:
     release_blitter();
+    ALOGI_IF(blitter->debug, "blitter: layers were not blitted");
     return false;
 }
