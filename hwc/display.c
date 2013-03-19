@@ -409,6 +409,7 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
     display->role = DISP_ROLE_EXTERNAL;
     display->mode = DISP_MODE_INVALID;
     display->mgr_ix = 1;
+    display->blanked = false;
 
     external_display_t *ext = get_external_display_info(hwc_dev, disp);
 
@@ -491,6 +492,7 @@ int init_primary_display(omap_hwc_device_t *hwc_dev)
     display->role = DISP_ROLE_PRIMARY;
     display->mode = DISP_MODE_PRESENTATION;
     display->mgr_ix = 0;
+    display->blanked = true;
 
     set_primary_display_transform_matrix(hwc_dev);
 
@@ -595,6 +597,7 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
     display->type = DISP_TYPE_HDMI;
     display->role = DISP_ROLE_EXTERNAL;
     display->mgr_ix = 1;
+    display->blanked = true;
 
     IMG_framebuffer_device_public_t *fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_EXTERNAL];
     uint32_t xres = fb_dev->base.width;
@@ -950,10 +953,29 @@ bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp)
 
 int blank_display(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (!is_valid_display(hwc_dev, disp) || hwc_dev->fb_fd[disp] < 0)
-        return -EINVAL;
+    if (!is_valid_display(hwc_dev, disp))
+        return -ENODEV;
 
-    int err = ioctl(hwc_dev->fb_fd[disp], FBIOBLANK, FB_BLANK_POWERDOWN);
+    display_t *display = hwc_dev->displays[disp];
+    int err = 0;
+
+    display->blanked = true;
+
+    switch (display->type) {
+    case DISP_TYPE_LCD:
+    case DISP_TYPE_HDMI:
+        if (hwc_dev->fb_fd[disp] >= 0)
+            err = ioctl(hwc_dev->fb_fd[disp], FBIOBLANK, FB_BLANK_POWERDOWN);
+        else
+            err = -ENODEV;
+        break;
+    case DISP_TYPE_WFD:
+        break;
+    default:
+        err = -ENODEV;
+        break;
+    }
+
     if (err)
         ALOGW("Failed to blank display %d (%d)", disp, err);
 
@@ -962,10 +984,29 @@ int blank_display(omap_hwc_device_t *hwc_dev, int disp)
 
 int unblank_display(omap_hwc_device_t *hwc_dev, int disp)
 {
-    if (!is_valid_display(hwc_dev, disp) || hwc_dev->fb_fd[disp] < 0)
-        return -EINVAL;
+    if (!is_valid_display(hwc_dev, disp))
+        return -ENODEV;
 
-    int err = ioctl(hwc_dev->fb_fd[disp], FBIOBLANK, FB_BLANK_UNBLANK);
+    display_t *display = hwc_dev->displays[disp];
+    int err = 0;
+
+    display->blanked = false;
+
+    switch (display->type) {
+    case DISP_TYPE_LCD:
+    case DISP_TYPE_HDMI:
+        if (hwc_dev->fb_fd[disp] >= 0)
+            err = ioctl(hwc_dev->fb_fd[disp], FBIOBLANK, FB_BLANK_UNBLANK);
+        else
+            err = -ENODEV;
+        break;
+    case DISP_TYPE_WFD:
+        break;
+    default:
+        err = -ENODEV;
+        break;
+    }
+
     if (err)
         ALOGW("Failed to unblank display %d (%d)", disp, err);
 

@@ -627,7 +627,11 @@ static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
 
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
 
-    wfd->use_wb = wb_capture_layer(&wfd->wb_layer);
+    if (!display->blanked)
+        wfd->use_wb = wb_capture_layer(&wfd->wb_layer);
+    else
+        wfd->use_wb = false;
+
     if (wfd->use_wb) {
         ALOGV("setup_wb_capture: layer is captured, handle = %p", wfd->wb_layer.handle);
         comp->buffers[comp->num_buffers] = wfd->wb_layer.handle;
@@ -705,8 +709,8 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
         return;
     }
 
-    /* If display is not configured drop compositions */
-    if (hdmi && hdmi->video_mode_ix == 0)
+    /* If display is blanked or not configured drop compositions */
+    if (display->blanked || (hdmi && hdmi->video_mode_ix == 0))
         return;
 
     /* Mirror all layers */
@@ -965,8 +969,8 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     if (is_wfd_display(hwc_dev, disp))
         setup_wb_capture(hwc_dev, disp);
 
-    /* If display is not configured drop compositions */
-    if (hdmi && hdmi->video_mode_ix == 0)
+    /* If display is blanked or not configured drop compositions */
+    if (display->blanked || (hdmi && hdmi->video_mode_ix == 0))
         dsscomp->num_ovls = 0;
 
     if (debug) {
@@ -1485,10 +1489,26 @@ static int hwc_eventControl(struct hwc_composer_device_1* dev,
     }
 }
 
-static int hwc_blank(struct hwc_composer_device_1 *dev __unused, int dpy __unused, int blank __unused)
+static int hwc_blank(struct hwc_composer_device_1 *dev, int disp, int blank)
 {
-    // We're using an older method of screen blanking based on
-    // early_suspend in the kernel.  No need to do anything here.
+    omap_hwc_device_t *hwc_dev = (omap_hwc_device_t *) dev;
+
+    pthread_mutex_lock(&hwc_dev->lock);
+
+    if (!is_valid_display(hwc_dev, disp)) {
+        pthread_mutex_unlock(&hwc_dev->lock);
+        return -ENODEV;
+    }
+
+    /*
+     * We're using an older method of screen blanking based on early_suspend in the kernel.
+     * No need to do anything here except updating the display state.
+     */
+    display_t *display = hwc_dev->displays[disp];
+    display->blanked = blank;
+
+    pthread_mutex_unlock(&hwc_dev->lock);
+
     return 0;
 }
 

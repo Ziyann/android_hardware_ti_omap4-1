@@ -102,6 +102,8 @@ struct display {
 
     uint32_t mgr_ix;
 
+    bool blanked;
+
     hwc_display_contents_1_t *contents;
     layer_statistics_t layer_stats;
     composition_t composition;
