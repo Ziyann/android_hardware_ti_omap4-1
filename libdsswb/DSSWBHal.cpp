@@ -262,23 +262,28 @@ status_t DSSWBHal::queue(int wbHandle, int bufIndex) {
 
 status_t DSSWBHal::dequeue(int wbHandle, int *bufIndex) {
     ALOGV("DSSWBHal::dequeue");
-    AutoMutex lock(mLock);
-    if (wbHandle != mWBHandle)
-        return PERMISSION_DENIED;
+    {
+        AutoMutex lock(mLock);
+        if (wbHandle != mWBHandle)
+            return PERMISSION_DENIED;
 
-    while ((!mQueueList.empty() || !mWritebackList.empty()) && mDequeueList.empty()) {
-        ALOGV("no buffers to dequeue numqueued %d", mQueueList.size());
-        // wait for the queue to get one more buffer
-        mDequeueCondition.wait(mLock);
+        while ((!mQueueList.empty() || !mWritebackList.empty()) && mDequeueList.empty()) {
+            ALOGV("no buffers to dequeue numqueued %d", mQueueList.size());
+            // wait for the queue to get one more buffer
+            mDequeueCondition.wait(mLock);
+        }
+
+        if (mDequeueList.empty()) {
+            return INVALID_OPERATION;
+        }
+
+        List<int>::iterator it;
+        it = mDequeueList.begin();
+        *bufIndex = *it;
+
+        mDequeueList.erase(it);
+        mBufferSlots.editItemAt(*bufIndex).state = BufferSlot::DEQUEUED;
     }
-
-    if (mDequeueList.empty()) {
-        return INVALID_OPERATION;
-    }
-
-    List<int>::iterator it;
-    it = mDequeueList.begin();
-    *bufIndex = *it;
 
     int err = NO_ERROR;
     if (mBufferSlots[*bufIndex].syncId != 0) {
@@ -287,8 +292,6 @@ status_t DSSWBHal::dequeue(int wbHandle, int *bufIndex) {
             ALOGW("Timed out waiting for WB operation to complete (%d)", err);
     }
 
-    mDequeueList.erase(it);
-    mBufferSlots.editItemAt(*bufIndex).state = BufferSlot::DEQUEUED;
     ALOGV("WBHal::dequeue index %d status %d", *bufIndex, BufferSlot::DEQUEUED);
 
     return err;
