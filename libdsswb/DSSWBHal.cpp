@@ -177,6 +177,9 @@ status_t DSSWBHal::releaseWB(int wbHandle) {
     // reset member variables at end of session
     for (Vector<BufferSlot>::iterator it = mBufferSlots.begin(); it != mBufferSlots.end(); ++it) {
         if (it->state != BufferSlot::FREE) {
+            if (it->state != BufferSlot::DEQUEUED)
+                ALOGW("unregistering buffer that is still being used (state = %d)", it->state);
+
             err = mGrallocModule->unregisterBuffer(mGrallocModule, it->handle);
             if (err != 0)
                 ALOGW("unable to unregister buffer from SF allocator");
