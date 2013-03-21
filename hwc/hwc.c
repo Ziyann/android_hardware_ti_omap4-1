@@ -1056,32 +1056,25 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
 
     int err = 0;
 
+    /* The list can be NULL which means HWC is temporarily disabled. However, if dpy and sur
+     * are NULL it means we're turning the screen off.
+     */
     if (dpy && sur) {
-        // list can be NULL which means hwc is temporarily disabled.
-        // however, if dpy and sur are null it means we're turning the
-        // screen off. no shall not call eglSwapBuffers() in that case.
-
         if (comp->use_sgx) {
-            if (hwc_dev->base.common.version <= HWC_DEVICE_API_VERSION_1_0) {
-                if (!eglSwapBuffers((EGLDisplay)dpy, (EGLSurface)sur)) {
-                    ALOGE("eglSwapBuffers error");
-                    return HWC_EGL_ERROR;
-                }
+            buffer_handle_t framebuffer = NULL;
+            if (layer_stats->framebuffer) {
+                /* Layer with HWC_FRAMEBUFFER_TARGET should be last in the list. The buffer handle
+                 * is updated by SurfaceFlinger after prepare() call, so FB slot has to be updated
+                 * in set().
+                 */
+                framebuffer = list->hwLayers[list->numHwLayers - 1].handle;
+            }
+
+            if (framebuffer) {
+                comp->buffers[dsscomp->ovls[0].ba] = framebuffer;
             } else {
-                if (list) {
-                    if (layer_stats->framebuffer) {
-                        /* Layer with HWC_FRAMEBUFFER_TARGET should be last in the list. The buffer handle
-                         * is updated by SurfaceFlinger after prepare() call, so FB slot has to be updated
-                         * in set().
-                         */
-                        uint32_t list_fb_ix = list->numHwLayers - 1;
-                        uint32_t comp_fb_ix = dsscomp->ovls[0].ba;
-                        comp->buffers[comp_fb_ix] = list->hwLayers[list_fb_ix].handle;
-                    } else {
-                        ALOGE("No buffer is provided for GL composition");
-                        return -EFAULT;
-                    }
-                }
+                ALOGE("set[%d]: No buffer is provided for GL composition", disp);
+                return -EFAULT;
             }
         }
 
