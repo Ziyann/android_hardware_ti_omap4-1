@@ -691,7 +691,8 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
     hwc_display_contents_1_t *list = display->contents;
 
     /* Mirror the layers using primary display composition */
-    composition_t *comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
+    display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+    composition_t *comp = &primary_display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
     uint32_t i, ix;
 
@@ -703,6 +704,9 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
 
         layer->compositionType = HWC_OVERLAY;
     }
+
+    if (primary_display->blanked)
+        return;
 
     if (wfd && wfd->wb_mode == OMAP_WB_CAPTURE_MODE) {
         setup_wb_capture(hwc_dev, disp);
