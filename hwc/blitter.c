@@ -146,11 +146,8 @@ bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents)
             break;
     }
 
-    size_t num_layers = contents->numHwLayers;
-    if (hwc_dev->base.common.version > HWC_DEVICE_API_VERSION_1_0) {
-        /* Ignore HWC_FRAMEBUFFER_TARGET layer at the end of the list */
-        num_layers -= 1;
-    }
+    /* Ignore HWC_FRAMEBUFFER_TARGET layer at the end of the list */
+    size_t num_layers = contents->numHwLayers - 1;
 
 #ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
     /*
