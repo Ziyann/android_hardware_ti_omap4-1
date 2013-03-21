@@ -31,6 +31,35 @@
 #include "display.h"
 #include "dump.h"
 
+enum {
+    BUFFER_MAPPING_BLITTER,
+    BUFFER_MAPPING_DSSCOMP
+};
+
+static void get_buffer_mapping(omap_hwc_device_t *hwc_dev, int disp, uint32_t *buffer_type)
+{
+    composition_t *comp = &hwc_dev->displays[disp]->composition;
+    struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    struct omap_hwc_blit_data *blit_data = &comp->comp_data.blit_data;
+    uint32_t i;
+
+    for (i = 0; i < comp->num_buffers; i++) {
+        buffer_type[i] = BUFFER_MAPPING_BLITTER;
+    }
+
+    for (i = 0; i < dsscomp->num_ovls; i++) {
+        if (dsscomp->ovls[i].addressing == OMAP_DSS_BUFADDR_LAYER_IX) {
+            int ix = dsscomp->ovls[i].ba;
+            if (blit_data->rgz_items) {
+                if (ix > 0)
+                    buffer_type[ix - 1] = BUFFER_MAPPING_DSSCOMP;
+            } else {
+                buffer_type[ix] = BUFFER_MAPPING_DSSCOMP;
+            }
+        }
+    }
+}
+
 static void dump_printf(dump_buf_t *buf, const char *fmt, ...)
 {
     va_list ap;
@@ -141,13 +170,14 @@ void dump_set_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_
 {
     composition_t *comp = &hwc_dev->displays[disp]->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    struct omap_hwc_blit_data *blit_data = &comp->comp_data.blit_data;
 
     char logbuf[1024];
     struct dump_buf log = {
         .buf = logbuf,
         .buf_len = sizeof(logbuf),
     };
-    uint32_t i;
+    uint32_t i, j;
 
     dump_printf(&log, "set H{");
 
@@ -195,22 +225,21 @@ void dump_set_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_
             dump_printf(&log, "-");
     }
 
+    uint32_t buffer_type[MAX_COMPOSITION_BUFFERS];
+    get_buffer_mapping(hwc_dev, disp, buffer_type);
+
     dump_printf(&log, "} L{");
 
-    for (i = 0; i < comp->num_buffers; i++) {
-        if (i)
-            dump_printf(&log, " ");
-
-        dump_printf(&log, "%p", comp->buffers[i]);
+    for (i = 0, j = 0; i < comp->num_buffers; i++) {
+        if (buffer_type[i] == BUFFER_MAPPING_DSSCOMP)
+            dump_printf(&log, "%s%p", j++ ? " " : "", comp->buffers[i]);
     }
 
-    if (comp->blitter.num_buffers) {
+    if (blit_data->rgz_items) {
         dump_printf(&log, "} B{");
-        for (i = 0; i < comp->blitter.num_buffers; i++) {
-            if (i)
-                dump_printf(&log, " ");
-
-            dump_printf(&log, "%p", comp->buffers[comp->num_buffers + i]);
+        for (i = 0, j = 0; i < comp->num_buffers; i++) {
+            if (buffer_type[i] == BUFFER_MAPPING_BLITTER)
+                dump_printf(&log, "%s%p", j++ ? " " : "", comp->buffers[i]);
         }
     }
 
@@ -268,18 +297,21 @@ void dump_post2(omap_hwc_device_t *hwc_dev, int disp)
 {
     composition_t *comp = &hwc_dev->displays[disp]->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
-    uint32_t num_buffers = comp->num_buffers + comp->blitter.num_buffers;
+    struct omap_hwc_blit_data *blit_data = &comp->comp_data.blit_data;
+    uint32_t buffer_type[MAX_COMPOSITION_BUFFERS];
     uint32_t i;
 
-    for (i = 0; i < num_buffers; i++) {
-        ALOGI("buf[%d] hndl %p => %s", i, comp->buffers[i], i < comp->num_buffers ? "dss" : "blt");
+    get_buffer_mapping(hwc_dev, disp, buffer_type);
+
+    for (i = 0; i < comp->num_buffers; i++) {
+        ALOGI("buf[%d] hndl %p => %s", i, comp->buffers[i], buffer_type[i] == BUFFER_MAPPING_DSSCOMP ? "dss" : "blt");
     }
 
     for (i = 0; i < dsscomp->num_ovls; i++) {
         char ba[32];
         switch (dsscomp->ovls[i].addressing) {
         case OMAP_DSS_BUFADDR_LAYER_IX:
-            if (comp->blitter.num_buffers)
+            if (blit_data->rgz_items)
                 if (i == 0)
                     sprintf(ba, "bltfb");
                 else

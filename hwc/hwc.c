@@ -626,6 +626,7 @@ static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
         comp = &display->composition;
 
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    struct omap_hwc_blit_data *blit_data = &comp->comp_data.blit_data;
 
     if (!display->blanked)
         wfd->use_wb = wb_capture_layer(&wfd->wb_layer);
@@ -644,7 +645,7 @@ static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
         oi->cfg.mgr_ix = mgr_ix;
         oi->cfg.ix = OMAP_DSS_WB;
         oi->addressing = OMAP_DSS_BUFADDR_LAYER_IX;
-        oi->ba = comp->num_buffers;
+        oi->ba = comp->num_buffers + (blit_data->rgz_items > 0 ? 1 : 0);
         oi->cfg.wb_source = mgr_ix;
         oi->cfg.wb_mode = wfd->wb_mode;
 
@@ -775,6 +776,8 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 
     memset(dsscomp, 0x0, sizeof(*dsscomp));
     dsscomp->sync_id = hwc_dev->dsscomp.sync_id++;
+    dsscomp->num_ovls = 0;
+    comp->num_buffers = 0;
 
     /*
      * The following priorities are used for different compositing HW:
@@ -785,7 +788,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
      */
 
     /* Check if we can blit everything */
-    bool blit_all = (get_blitter_policy(hwc_dev, disp) == BLT_POLICY_ALL) && blit_layers(hwc_dev, list, 0);
+    bool blit_all = (get_blitter_policy(hwc_dev, disp) == BLT_POLICY_ALL) && blit_layers(hwc_dev, list);
 
     if (blit_all) {
         comp->use_sgx = false;
@@ -812,9 +815,6 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     uint32_t ovl_ix = comp->ovl_ix_base;
     uint32_t mem_used = 0;
     uint32_t i;
-
-    dsscomp->num_ovls = 0;
-    comp->num_buffers = 0;
 
     /*
      * If the SGX is used or we are going to blit something we need a framebuffer and an overlay
@@ -907,7 +907,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
          * we need to reset its state.
          */
         if (comp->use_sgx) {
-            if (blit_layers(hwc_dev, list, comp->num_buffers)) {
+            if (blit_layers(hwc_dev, list)) {
                 comp->use_sgx = 0;
             }
         } else
@@ -1100,22 +1100,12 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
         dump_dsscomp(dsscomp);
 #endif
 
-        comp->comp_data.blit_data.rgz_flags = comp->blitter.flags;
-        comp->comp_data.blit_data.rgz_items = comp->blitter.num_blits;
-        int omaplfb_comp_data_sz = sizeof(comp->comp_data) +
-            (comp->comp_data.blit_data.rgz_items * sizeof(struct rgz_blt_entry));
-
-        uint32_t num_buffers = comp->num_buffers + comp->blitter.num_buffers;
-
-        ALOGI_IF(blitter->debug, "Post2, blits %d, ovl_buffers %d, blit_buffers %d sgx %d",
-            comp->blitter.num_blits, comp->num_buffers, comp->blitter.num_buffers, comp->use_sgx);
-
         if (debug_post2)
             dump_post2(hwc_dev, disp);
 
         err = hwc_dev->fb_dev[disp]->Post2((framebuffer_device_t *)hwc_dev->fb_dev[disp],
-                             comp->buffers, num_buffers,
-                             dsscomp, omaplfb_comp_data_sz);
+                             comp->buffers, comp->num_buffers,
+                             dsscomp, sizeof(comp->comp_data) + get_blitter_data_size(hwc_dev));
 
         if (disp == HWC_DISPLAY_PRIMARY)
             showfps();

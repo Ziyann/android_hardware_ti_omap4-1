@@ -46,18 +46,11 @@ struct blitter_config {
 };
 typedef struct blitter_config blitter_config_t;
 
-struct blitter_composition {
-    uint32_t flags;
-
-    uint32_t num_blits;
-    uint32_t num_buffers; /* buffers used with blit */
-};
-typedef struct blitter_composition blitter_composition_t;
-
 int init_blitter(omap_hwc_device_t *hwc_dev);
 uint32_t get_blitter_policy(omap_hwc_device_t *hwc_dev, int disp);
 void reset_blitter(omap_hwc_device_t *hwc_dev);
 void release_blitter(void);
-bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents, int buf_offset);
+bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents);
+uint32_t get_blitter_data_size(omap_hwc_device_t *hwc_dev);
 
 #endif
