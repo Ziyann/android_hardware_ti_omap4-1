@@ -22,12 +22,12 @@
 
 #include <hardware/hwcomposer.h>
 
-#include "blitter.h"
 #include "layer.h"
 
 #define MAX_DISPLAYS 3
 #define MAX_DISPLAY_CONFIGS 32
 #define EXTERNAL_DISPLAY_BACK_BUFFERS 2
+#define MAX_COMPOSITION_BUFFERS 32
 
 struct ion_handle;
 typedef struct omap_hwc_device omap_hwc_device_t;
@@ -80,8 +80,6 @@ struct composition {
     uint32_t avail_ovls;         /* # of overlays available for current composition */
     uint32_t scaling_ovls;       /* # of overlays available with scaling caps */
     uint32_t used_ovls;          /* # of overlays used in composition */
-
-    blitter_composition_t blitter;
 
     /* This is a kernel data structure. comp_data and blit_ops should be defined
      * in consecutive memory.

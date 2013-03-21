@@ -58,7 +58,6 @@
 
 #define MAX_DISPLAY_ID (MAX_DISPLAYS - 1)
 #define INCH_TO_MM 25.4f
-#define MAX_HWC_LAYERS 32
 
 /* Used by property settings */
 enum {
@@ -107,13 +106,13 @@ static int allocate_display(size_t display_data_size, uint32_t max_configs, disp
     memset(display->configs, 0, config_data_size);
 
     /* Allocate the maximum buffers that we can receive from HWC */
-    display->composition.buffers = malloc(sizeof(buffer_handle_t) * MAX_HWC_LAYERS);
+    display->composition.buffers = malloc(sizeof(buffer_handle_t) * MAX_COMPOSITION_BUFFERS);
     if (!display->composition.buffers) {
         err = -ENOMEM;
         goto err_out;
     }
 
-    memset(display->composition.buffers, 0, sizeof(buffer_handle_t) * MAX_HWC_LAYERS);
+    memset(display->composition.buffers, 0, sizeof(buffer_handle_t) * MAX_COMPOSITION_BUFFERS);
 
 err_out:
 

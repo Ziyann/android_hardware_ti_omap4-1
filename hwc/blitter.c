@@ -110,11 +110,10 @@ void reset_blitter(omap_hwc_device_t *hwc_dev)
 {
     /* Blitter is used only in primary display composition */
     composition_t *comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
+    struct omap_hwc_blit_data *blit_data = &comp->comp_data.blit_data;
 
-    comp->blitter.flags = 0;
-    comp->blitter.num_blits = 0;
-    comp->blitter.num_buffers = 0;
-    comp->comp_data.blit_data.rgz_items = 0;
+    blit_data->rgz_flags = 0;
+    blit_data->rgz_items = 0;
 }
 
 void release_blitter(void)
@@ -122,7 +121,7 @@ void release_blitter(void)
     rgz_release(&grgz);
 }
 
-bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents, int buf_offset)
+bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents)
 {
     blitter_config_t *blitter = &hwc_dev->blitter;
     ALOGI_IF(blitter->debug, "blitter: trying to blit layers");
@@ -240,22 +239,22 @@ bool blit_layers(omap_hwc_device_t *hwc_dev, hwc_display_contents_1_t *contents,
 
     /* Blitter is used only in primary display composition */
     composition_t *comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
+    struct omap_hwc_blit_data *blit_data = &comp->comp_data.blit_data;
 
-    comp->blitter.flags |= HWC_BLT_FLAG_USE_FB;
-    comp->blitter.num_blits = out.data.bvc.out_blits;
-    comp->blitter.num_buffers = out.data.bvc.out_nhndls;
+    blit_data->rgz_flags |= HWC_BLT_FLAG_USE_FB;
+    blit_data->rgz_items = out.data.bvc.out_blits;
 
-    for (i = 0; i < comp->blitter.num_buffers; i++) {
+    for (i = 0; i < (uint32_t)out.data.bvc.out_nhndls; i++) {
         //ALOGI("blit buffers[%d] = %p", bufoff, out.data.bvc.out_hndls[i]);
-        comp->buffers[buf_offset++] = out.data.bvc.out_hndls[i];
+        comp->buffers[comp->num_buffers++] = out.data.bvc.out_hndls[i];
     }
 
     struct rgz_blt_entry *res_blit_ops = (struct rgz_blt_entry *) out.data.bvc.cmdp;
-    memcpy(comp->comp_data.blit_data.rgz_blts, res_blit_ops, sizeof(*res_blit_ops) * out.data.bvc.cmdlen);
+    memcpy(blit_data->rgz_blts, res_blit_ops, sizeof(*res_blit_ops) * out.data.bvc.cmdlen);
 
     ALOGI_IF(blitter->debug, "blitter: blt struct sz %d", sizeof(*res_blit_ops) * out.data.bvc.cmdlen);
-    ALOGE_IF(comp->blitter.num_blits != (uint32_t)out.data.bvc.cmdlen, "blit_num != out.data.bvc.cmdlen, %d != %d",
-            comp->blitter.num_blits, out.data.bvc.cmdlen);
+    ALOGE_IF(out.data.bvc.out_blits != out.data.bvc.cmdlen, "blit_num != out.data.bvc.cmdlen, %d != %d",
+            out.data.bvc.out_blits, out.data.bvc.cmdlen);
 
     /* all layers will be rendered without SGX help either via DSS or blitter */
     for (i = 0; i < num_layers; i++) {
@@ -275,4 +274,13 @@ err_out:
     release_blitter();
     ALOGI_IF(blitter->debug, "blitter: layers were not blitted");
     return false;
+}
+
+uint32_t get_blitter_data_size(omap_hwc_device_t *hwc_dev)
+{
+    /* Blitter is used only in primary display composition */
+    composition_t *comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
+    struct omap_hwc_blit_data *blit_data = &comp->comp_data.blit_data;
+
+    return blit_data->rgz_items * sizeof(struct rgz_blt_entry);
 }
