@@ -212,7 +212,7 @@ bool can_dss_render_all_layers(omap_hwc_device_t *hwc_dev, int disp)
             layer_stats->scaled <= comp->scaling_ovls &&
             layer_stats->nv12 <= comp->scaling_ovls &&
             /* fits into TILER slot */
-            layer_stats->mem1d_total <= hwc_dev->dsscomp.limits.tiler1d_slot_size &&
+            layer_stats->mem1d_total <= comp->tiler1d_slot_size &&
             /* we cannot clone non-NV12 transformed layers */
             (!tform || (layer_stats->nv12 == layer_stats->composable)) &&
             /* HDMI cannot display BGR */

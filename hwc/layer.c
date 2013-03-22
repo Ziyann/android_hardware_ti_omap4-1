@@ -100,9 +100,7 @@ uint32_t get_required_mem1d_size(const hwc_layer_1_t *layer)
     if (handle == NULL || is_nv12_layer(layer))
         return 0;
 
-    int bpp = handle->iFormat == HAL_PIXEL_FORMAT_RGB_565 ? 2 : 4;
-    int stride = ALIGN(handle->iWidth, HW_ALIGN) * bpp;
-    return stride * handle->iHeight;
+    return get_stride_from_format(handle->iFormat, handle->iWidth) * handle->iHeight;
 }
 
 static bool can_scale_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_layer_1_t *layer)

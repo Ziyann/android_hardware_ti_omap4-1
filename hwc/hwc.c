@@ -422,6 +422,7 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
 
     composition_t *primary_comp = &primary_display->composition;
 
+    primary_comp->tiler1d_slot_size = hwc_dev->dsscomp.limits.tiler1d_slot_size;
     primary_comp->ovl_ix_base = ovl_ix_base;
     primary_comp->wanted_ovls = max_overlays;
     primary_comp->avail_ovls = max_primary_overlays;
@@ -429,6 +430,13 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
     primary_comp->used_ovls = 0;
 
     int ext_disp = get_external_display_id(hwc_dev);
+    bool mirroring = is_external_display_mirroring(hwc_dev, ext_disp);
+
+    if (hwc_dev->dsscomp.last_ext_ovls || (ext_disp >= 0 && !mirroring)) {
+        /* Share available Tiler1D space between primary and external displays. */
+        primary_comp->tiler1d_slot_size /= 2;
+    }
+
     if (ext_disp < 0)
         return;
 
@@ -437,7 +445,7 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
     if (is_wfd_display(hwc_dev, ext_disp)) {
         wfd_display_t *wfd = (wfd_display_t *)ext_display;
 
-        if (is_external_display_mirroring(hwc_dev, ext_disp)) {
+        if (mirroring) {
             uint32_t screen_xres = WIDTH(ext_display->transform.region);
             uint32_t screen_yres = HEIGHT(ext_display->transform.region);
             display_config_t *config = &ext_display->configs[ext_display->active_config_ix];
@@ -470,13 +478,14 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
      */
     composition_t *ext_comp = &ext_display->composition;
 
+    ext_comp->tiler1d_slot_size = hwc_dev->dsscomp.limits.tiler1d_slot_size - primary_comp->tiler1d_slot_size;
     ext_comp->wanted_ovls = max_overlays - primary_comp->wanted_ovls;
     ext_comp->avail_ovls = MIN(max_external_overlays, ext_comp->wanted_ovls);
     ext_comp->scaling_ovls = ext_comp->avail_ovls;
     ext_comp->used_ovls = 0;
     ext_comp->ovl_ix_base = MAX_DSS_OVERLAYS - ext_comp->avail_ovls;
 
-    if (is_external_display_mirroring(hwc_dev, ext_disp)) {
+    if (mirroring) {
         /*
          * If mirroring, we are limited on primary composition by number of available external
          * overlays. We should be able to clone all primary overlays to external. Still we
@@ -782,7 +791,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     int fb_z = blit_all ? 0 : -1;
     bool scaled_gfx = false;
     uint32_t ovl_ix = comp->ovl_ix_base;
-    uint32_t mem_used = 0;
+    uint32_t mem1d_used = 0;
     uint32_t i;
 
     /*
@@ -795,13 +804,6 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         ovl_ix++;
     }
 
-    int ext_disp = get_external_display_id(hwc_dev);
-    uint32_t tiler1d_slot_size = hwc_dev->dsscomp.limits.tiler1d_slot_size;
-    if (hwc_dev->dsscomp.last_ext_ovls ||
-            (ext_disp >= 0 && !is_external_display_mirroring(hwc_dev, ext_disp))) {
-        tiler1d_slot_size = tiler1d_slot_size >> 1;
-    }
-
     for (i = 0; i < list->numHwLayers && !blit_all; i++) {
         hwc_layer_1_t *layer = &list->hwLayers[i];
 
@@ -811,12 +813,12 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
             /* render protected layers via DSS */
             is_protected_layer(layer) ||
             is_upscaled_nv12_layer(hwc_dev, layer)) &&
-            mem_used + get_required_mem1d_size(layer) <= tiler1d_slot_size &&
+            mem1d_used + get_required_mem1d_size(layer) <= comp->tiler1d_slot_size &&
             /* can't have a transparent overlay in the middle of the framebuffer stack */
             !(is_blended_layer(layer) && fb_z >= 0)) {
 
             /* render via DSS overlay */
-            mem_used += get_required_mem1d_size(layer);
+            mem1d_used += get_required_mem1d_size(layer);
             layer->compositionType = HWC_OVERLAY;
 
             /*
@@ -925,6 +927,9 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         z |= 1 << c->zorder;
         ix |= 1 << c->ix;
     }
+
+    int ext_disp = get_external_display_id(hwc_dev);
+
     dsscomp->mode = DSSCOMP_SETUP_DISPLAY;
     dsscomp->mgrs[0].ix = display->mgr_ix;
     dsscomp->mgrs[0].alpha_blending = 1;

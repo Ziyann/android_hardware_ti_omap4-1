@@ -76,6 +76,7 @@ struct composition {
     bool use_sgx;
     bool swap_rb;
 
+    uint32_t tiler1d_slot_size;
     uint32_t ovl_ix_base;        /* index of first overlay used in composition */
     uint32_t wanted_ovls;        /* # of overlays required for current composition */
     uint32_t avail_ovls;         /* # of overlays available for current composition */
