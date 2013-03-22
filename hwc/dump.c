@@ -166,6 +166,51 @@ void dump_layers_ext(const hwc_layer_1_t *list, uint32_t num_layers, uint32_t in
     }
 }
 
+void dump_prepare_info(omap_hwc_device_t *hwc_dev, int disp)
+{
+    display_t *display = hwc_dev->displays[disp];
+    composition_t *comp = &display->composition;
+    struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    layer_statistics_t *layer_stats = &display->layer_stats;
+
+    const char *comp_type = "all-OVL";
+    if (comp->use_sgx)
+        comp_type = "SGX+OVL";
+    else if (comp->comp_data.blit_data.rgz_items)
+        comp_type = "BLT+OVL";
+
+    const char *ext_type = "";
+    const char *ext_mode = "OFF+";
+    int ext_rotation = 0;
+    const char *ext_hflip = "";
+    int ext_ovls = 0;
+    int ext_disp = get_external_display_id(hwc_dev);
+
+    if (is_valid_display(hwc_dev, ext_disp)) {
+        display_t *ext_display = hwc_dev->displays[ext_disp];
+
+        if (is_hdmi_display(hwc_dev, ext_disp))
+            ext_type = "TV+";
+        else if (is_wfd_display(hwc_dev, ext_disp))
+            ext_type = "WFD+";
+
+        ext_mode = is_external_display_mirroring(hwc_dev, ext_disp) ? "mirror+" : "present+";
+        ext_rotation = ext_display->transform.rotation * 90;
+
+        if (ext_display->transform.hflip)
+            ext_hflip = "+hflip";
+
+        ext_ovls = ext_display->composition.avail_ovls;
+    }
+
+    ALOGD("prepare[%d] : %08x - %s (layers=%d, comp=%d, scaled=%d, RGB=%d, BGR=%d, NV12=%d) (ext=%s%s%ddeg%s, ovls=%d/%d, last=%d/%d)",
+        disp, dsscomp->sync_id, comp_type,
+        layer_stats->count, layer_stats->composable, layer_stats->scaled,
+        layer_stats->rgb, layer_stats->bgr, layer_stats->nv12,
+        ext_type, ext_mode, ext_rotation, ext_hflip,
+        ext_ovls, comp->avail_ovls, hwc_dev->dsscomp.last_ext_ovls, hwc_dev->dsscomp.last_int_ovls);
+}
+
 void dump_set_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *list)
 {
     composition_t *comp = &hwc_dev->displays[disp]->composition;
@@ -179,7 +224,7 @@ void dump_set_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_
     };
     uint32_t i, j;
 
-    dump_printf(&log, "set H{");
+    dump_printf(&log, "set[%d] : H{", disp);
 
     for (i = 0; list && i < list->numHwLayers; i++) {
         if (i)
@@ -243,7 +288,7 @@ void dump_set_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_
         }
     }
 
-    dump_printf(&log, "}%s\n", comp->use_sgx ? " swap" : "");
+    dump_printf(&log, "}%s", comp->use_sgx ? " swap" : "");
 
     ALOGD("%s", log.buf);
 }
@@ -252,7 +297,7 @@ void dump_dsscomp(struct dsscomp_setup_dispc_data *d)
 {
     uint32_t i;
 
-    ALOGD("[%08x] set: %c%c%c %d ovls\n",
+    ALOGD("[%08x] set: %c%c%c %d ovls",
          d->sync_id,
          (d->mode & DSSCOMP_SETUP_MODE_APPLY) ? 'A' : '-',
          (d->mode & DSSCOMP_SETUP_MODE_DISPLAY) ? 'D' : '-',
@@ -261,7 +306,7 @@ void dump_dsscomp(struct dsscomp_setup_dispc_data *d)
 
     for (i = 0; i < d->num_mgrs; i++) {
         struct dss2_mgr_info *mi = &d->mgrs[i];
-        ALOGD(" (dis%d alpha=%d col=%08x ilace=%d)\n",
+        ALOGD(" (dis%d alpha=%d col=%08x ilace=%d)",
              mi->ix,
              mi->alpha_blending, mi->default_color,
              mi->interlaced);
@@ -277,10 +322,10 @@ void dump_dsscomp(struct dsscomp_setup_dispc_data *d)
                     c->wb_source < OMAP_WB_GFX ? "mgr" : "ovl",
                     c->wb_source < OMAP_WB_GFX ? c->wb_source : c->wb_source - OMAP_WB_GFX);
         if (c->zonly)
-            ALOGD("ovl%d@%d(%s z%d)\n",
+            ALOGD("ovl%d@%d(%s z%d)",
                  c->ix, c->mgr_ix, c->enabled ? "ON" : "off", c->zorder);
         else
-            ALOGD("ovl%d@%d(%s z%d %s%s *%d%% %s%d*%d:%d,%d+%d,%d rot%d%s => %d,%d+%d,%d %p/%p|%d)\n",
+            ALOGD("ovl%d@%d(%s z%d %s%s *%d%% %s%d*%d:%d,%d+%d,%d rot%d%s => %d,%d+%d,%d %p/%p|%d)",
                  c->ix, c->mgr_ix, c->enabled ? "ON" : "off", c->zorder, DSS_FMT(c->color_mode),
                  c->pre_mult_alpha ? " premult" : "",
                  (c->global_alpha * 100 + 128) / 255,

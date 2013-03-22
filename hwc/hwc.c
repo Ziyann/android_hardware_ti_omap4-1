@@ -935,21 +935,9 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     if (display->blanked || (hdmi && hdmi->video_mode_ix == 0))
         dsscomp->num_ovls = 0;
 
-    if (debug) {
-        int ext_disp = get_external_display_id(hwc_dev);
+    if (debug)
+        dump_prepare_info(hwc_dev, disp);
 
-        ALOGD("prepare (%d) - %s (layers=%d, comp=%d/%d scaled, RGB=%d,BGR=%d,NV12=%d) (ext=%s%s%ddeg%s %dex/%dmx (last %dex,%din)\n",
-        dsscomp->sync_id,
-        comp->use_sgx ? "SGX+OVL" : "all-OVL",
-        layer_stats->count,
-        layer_stats->composable, layer_stats->scaled,
-        layer_stats->rgb, layer_stats->bgr, layer_stats->nv12,
-        is_hdmi_display(hwc_dev, ext_disp) ? "tv+" : "",
-        is_external_display_mirroring(hwc_dev, ext_disp)? "mirror+" : "OFF+",
-        ext_disp >= 0 ? hwc_dev->displays[ext_disp]->transform.rotation * 90 : 0,
-        ext_disp >= 0 ? hwc_dev->displays[ext_disp]->transform.hflip ? "+hflip" : "" : "",
-        comp->avail_ovls, comp->avail_ovls, hwc_dev->dsscomp.last_ext_ovls, hwc_dev->dsscomp.last_int_ovls);
-    }
     return 0;
 }
 
