@@ -39,6 +39,7 @@ void dump_display(omap_hwc_device_t *hwc_dev, dump_buf_t *log, int disp);
 void dump_layer(const hwc_layer_1_t *layer);
 void dump_layer_ext(const hwc_layer_1_t *layer, bool invalid_layer);
 void dump_layers_ext(const hwc_layer_1_t *list, uint32_t num_layers, uint32_t invalid_layer_ix);
+void dump_prepare_info(omap_hwc_device_t *hwc_dev, int disp);
 void dump_set_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *list);
 void dump_dsscomp(struct dsscomp_setup_dispc_data *d);
 void dump_post2(omap_hwc_device_t *hwc_dev, int disp);
