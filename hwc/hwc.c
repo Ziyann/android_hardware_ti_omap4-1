@@ -1107,8 +1107,12 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
         }
     }
 
-    if (err)
-        ALOGE("Post2 error[%d]", disp);
+    if (err) {
+        ALOGE("set[%d]: Failed to post composition %08x (%d)", disp, dsscomp->sync_id, err);
+        dump_set_info(hwc_dev, disp, list);
+        dump_dsscomp(dsscomp);
+        dump_post2(hwc_dev, disp);
+    }
 
     check_sync_fds_for_display(disp, list);
 
