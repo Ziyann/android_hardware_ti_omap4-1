@@ -40,6 +40,14 @@
  */
 #define WB_ASPECT_RATIO_TOLERANCE 0.15f
 
+static void append_manager(struct dsscomp_setup_dispc_data *dsscomp, int mgr_ix, bool swap_rb)
+{
+    dsscomp->mgrs[dsscomp->num_mgrs].ix = mgr_ix;
+    dsscomp->mgrs[dsscomp->num_mgrs].alpha_blending = 1;
+    dsscomp->mgrs[dsscomp->num_mgrs].swap_rb = swap_rb;
+    dsscomp->num_mgrs++;
+}
+
 int init_dsscomp(omap_hwc_device_t *hwc_dev)
 {
     dsscomp_state_t *dsscomp = &hwc_dev->dsscomp;
@@ -128,6 +136,26 @@ int setup_dsscomp_display(omap_hwc_device_t *hwc_dev, int mgr_ix, struct dsscomp
     }
 
     return 0;
+}
+
+void setup_dsscomp_manager(omap_hwc_device_t *hwc_dev, int disp)
+{
+    display_t *display = hwc_dev->displays[disp];
+    composition_t *comp = &display->composition;
+    struct dsscomp_setup_dispc_data *dsscomp;
+
+    if (is_external_display_mirroring(hwc_dev, disp))
+        /* When mirroring add second manager to the primary display composition */
+        dsscomp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition.comp_data.dsscomp_data;
+    else
+        dsscomp = &comp->comp_data.dsscomp_data;
+
+    append_manager(dsscomp, display->mgr_ix, comp->swap_rb);
+
+    if (hwc_dev->dsscomp.last_ext_ovls && get_external_display_id(hwc_dev) < 0) {
+        append_manager(dsscomp, 1, false);
+        hwc_dev->dsscomp.last_ext_ovls = 0;
+    }
 }
 
 bool can_dss_scale(omap_hwc_device_t *hwc_dev, uint32_t src_w, uint32_t src_h,

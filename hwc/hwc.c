@@ -662,8 +662,8 @@ static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
             }
         }
 
-        dsscomp->num_ovls++;
         dsscomp->mode = DSSCOMP_SETUP_DISPLAY_CAPTURE;
+        dsscomp->num_ovls++;
         comp->num_buffers++;
 
         wfd->wb_sync_id = dsscomp->sync_id;
@@ -721,9 +721,7 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
             break;
     }
 
-    dsscomp->mgrs[1] = dsscomp->mgrs[0];
-    dsscomp->mgrs[1].ix = display->mgr_ix;
-    dsscomp->num_mgrs++;
+    setup_dsscomp_manager(hwc_dev, disp);
 
     hwc_dev->dsscomp.last_ext_ovls = ix;
 
@@ -753,8 +751,8 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     }
 
     memset(dsscomp, 0x0, sizeof(*dsscomp));
+    dsscomp->mode = DSSCOMP_SETUP_DISPLAY;
     dsscomp->sync_id = hwc_dev->dsscomp.sync_id++;
-    dsscomp->num_ovls = 0;
     comp->num_buffers = 0;
 
     /*
@@ -928,21 +926,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         ix |= 1 << c->ix;
     }
 
-    int ext_disp = get_external_display_id(hwc_dev);
-
-    dsscomp->mode = DSSCOMP_SETUP_DISPLAY;
-    dsscomp->mgrs[0].ix = display->mgr_ix;
-    dsscomp->mgrs[0].alpha_blending = 1;
-    dsscomp->mgrs[0].swap_rb = comp->swap_rb;
-    dsscomp->num_mgrs = 1;
-
-    if (hwc_dev->dsscomp.last_ext_ovls && ext_disp < 0) {
-        dsscomp->mgrs[1] = dsscomp->mgrs[0];
-        dsscomp->mgrs[1].ix = 1;
-        dsscomp->mgrs[1].swap_rb = 0;
-        dsscomp->num_mgrs++;
-        hwc_dev->dsscomp.last_ext_ovls = 0;
-    }
+    setup_dsscomp_manager(hwc_dev, disp);
 
     if (is_wfd_display(hwc_dev, disp))
         setup_wb_capture(hwc_dev, disp);
@@ -952,6 +936,8 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         dsscomp->num_ovls = 0;
 
     if (debug) {
+        int ext_disp = get_external_display_id(hwc_dev);
+
         ALOGD("prepare (%d) - %s (layers=%d, comp=%d/%d scaled, RGB=%d,BGR=%d,NV12=%d) (ext=%s%s%ddeg%s %dex/%dmx (last %dex,%din)\n",
         dsscomp->sync_id,
         comp->use_sgx ? "SGX+OVL" : "all-OVL",

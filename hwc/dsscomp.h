@@ -46,6 +46,8 @@ int get_dsscomp_display_info(omap_hwc_device_t *hwc_dev, int mgr_ix, struct dssc
 int get_dsscomp_display_mode_db(omap_hwc_device_t *hwc_dev, int mgr_ix, struct dsscomp_videomode *mode_db, uint32_t *mode_db_len);
 int setup_dsscomp_display(omap_hwc_device_t *hwc_dev, int mgr_ix, struct dsscomp_videomode *mode);
 
+void setup_dsscomp_manager(omap_hwc_device_t *hwc_dev, int disp);
+
 bool can_dss_scale(omap_hwc_device_t *hwc_dev, uint32_t src_w, uint32_t src_h,
                    uint32_t dst_w, uint32_t dst_h, bool is_2d,
                    struct dsscomp_display_info *dis, uint32_t pclk);
