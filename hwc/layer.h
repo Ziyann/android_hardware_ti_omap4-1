@@ -27,6 +27,7 @@ typedef struct hwc_layer_1 hwc_layer_1_t;
 struct layer_statistics {
     uint32_t count;
     uint32_t composable;
+    uint32_t composable_mask;
     uint32_t scaled;
     uint32_t rgb;
     uint32_t bgr;

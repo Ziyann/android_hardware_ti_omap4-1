@@ -28,6 +28,7 @@
 #define MAX_DISPLAY_CONFIGS 32
 #define EXTERNAL_DISPLAY_BACK_BUFFERS 2
 #define MAX_COMPOSITION_BUFFERS 32
+#define MAX_COMPOSITION_LAYERS MAX_COMPOSITION_BUFFERS
 
 struct ion_handle;
 typedef struct omap_hwc_device omap_hwc_device_t;
