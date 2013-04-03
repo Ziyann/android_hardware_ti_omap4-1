@@ -53,6 +53,6 @@ uint32_t get_required_mem1d_size(const hwc_layer_1_t *layer);
 
 bool is_composable_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_layer_1_t *layer);
 
-void gather_layer_statistics(omap_hwc_device_t *hwc_dev, int disp);
+void gather_layer_statistics(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents);
 
 #endif

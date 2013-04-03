@@ -989,8 +989,15 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     }
 
     for (i = 0; i < numDisplays; i++) {
-        if (hwc_dev->displays[i])
-            gather_layer_statistics(hwc_dev, i);
+        if (hwc_dev->displays[i]) {
+            hwc_display_contents_1_t *contents;
+            if (is_external_display_mirroring(hwc_dev, i))
+                contents = hwc_dev->displays[HWC_DISPLAY_PRIMARY]->contents;
+            else
+                contents = hwc_dev->displays[i]->contents;
+
+            gather_layer_statistics(hwc_dev, i, contents);
+        }
     }
 
     reserve_overlays_for_displays(hwc_dev);

@@ -158,19 +158,18 @@ bool is_composable_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_layer_1
     return can_scale_layer(hwc_dev, disp, layer);
 }
 
-void gather_layer_statistics(omap_hwc_device_t *hwc_dev, int disp)
+void gather_layer_statistics(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents)
 {
     uint32_t i;
-    hwc_display_contents_1_t *list = hwc_dev->displays[disp]->contents;
     layer_statistics_t *layer_stats = &hwc_dev->displays[disp]->layer_stats;
 
     memset(layer_stats, 0, sizeof(*layer_stats));
 
-    layer_stats->count = list ? list->numHwLayers : 0;
+    layer_stats->count = contents ? contents->numHwLayers : 0;
 
     /* Figure out how many layers we can support via DSS */
-    for (i = 0; list && i < list->numHwLayers; i++) {
-        hwc_layer_1_t *layer = &list->hwLayers[i];
+    for (i = 0; i < layer_stats->count; i++) {
+        hwc_layer_1_t *layer = &contents->hwLayers[i];
 
         if (layer->compositionType == HWC_FRAMEBUFFER_TARGET) {
             layer_stats->framebuffer++;
