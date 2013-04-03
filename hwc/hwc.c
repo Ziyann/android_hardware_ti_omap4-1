@@ -228,25 +228,6 @@ static int crop_overlay_to_rect(struct hwc_rect vis_rect, struct dss2_ovl_info *
     return 0;
 }
 
-static void transform_overlay(transform_matrix transform, struct dss2_ovl_info *ovl)
-{
-    float x, y, w, h;
-    struct dss2_ovl_cfg *oc = &ovl->cfg;
-
-    /* display position */
-    x = transform[0][0] * oc->win.x + transform[0][1] * oc->win.y + transform[0][2];
-    y = transform[1][0] * oc->win.x + transform[1][1] * oc->win.y + transform[1][2];
-    w = transform[0][0] * oc->win.w + transform[0][1] * oc->win.h;
-    h = transform[1][0] * oc->win.w + transform[1][1] * oc->win.h;
-    oc->win.x = round_float(w > 0 ? x : x + w);
-    oc->win.y = round_float(h > 0 ? y : y + h);
-    /* compensate position rounding error by adjusting layer size */
-    w += w > 0 ? x - oc->win.x : oc->win.x - (x + w);
-    h += h > 0 ? y - oc->win.y : oc->win.y - (y + h);
-    oc->win.w = round_float(w > 0 ? w : -w);
-    oc->win.h = round_float(h > 0 ? h : -h);
-}
-
 static void adjust_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, struct dss2_ovl_info *ovl)
 {
     struct dss2_ovl_cfg *oc = &ovl->cfg;
@@ -259,7 +240,14 @@ static void adjust_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, stru
         return;
     }
 
-    transform_overlay(display->transform.matrix, ovl);
+    hwc_rect_t win = {oc->win.x, oc->win.y, oc->win.x + oc->win.w, oc->win.y + oc->win.h};
+
+    transform_rect(display->transform.matrix, &win);
+
+    oc->win.x = win.left;
+    oc->win.y = win.top;
+    oc->win.w = WIDTH(win);
+    oc->win.h = HEIGHT(win);
 
     /* combining transformations: F^a*R^b*F^i*R^j = F^(a+b)*R^(j+b*(-1)^i), because F*R = R^(-1)*F */
     oc->rotation += (oc->mirror ? -1 : 1) * display->transform.rotation;
@@ -749,25 +737,6 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
     layer_statistics_t *layer_stats = &display->layer_stats;
 
-    if (display->role == HWC_DISPLAY_EXTERNAL) {
-        external_display_t *ext = get_external_display_info(hwc_dev, disp);
-        if (ext && ext->update_transform) {
-            if (display->mode == DISP_MODE_PRESENTATION) {
-                display_config_t *config = &display->configs[display->active_config_ix];
-                struct hwc_rect src_region = { .right = config->xres, .bottom = config->yres };
-                display->transform.region = src_region;
-            } else {
-                primary_display_t *primary = get_primary_display_info(hwc_dev);
-                if (!primary)
-                    return -ENODEV;
-
-                display->transform.region = primary->mirroring_region;
-            }
-            if (!setup_external_display_transform(hwc_dev, disp))
-                ext->update_transform = false;
-        }
-    }
-
     if (is_external_display_mirroring(hwc_dev, disp)) {
         mirror_primary_composition(hwc_dev, disp);
 
@@ -1001,17 +970,32 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     }
 
     omap_hwc_device_t *hwc_dev = (omap_hwc_device_t *)dev;
+    int err = 0;
+    uint32_t i;
 
     pthread_mutex_lock(&hwc_dev->lock);
 
     detect_virtual_displays(hwc_dev, numDisplays, displays);
     set_display_contents(hwc_dev, numDisplays, displays);
 
+    int ext_disp = get_external_display_id(hwc_dev);
+    if (ext_disp >= 0) {
+        external_display_t *ext = get_external_display_info(hwc_dev, ext_disp);
+        if (ext && ext->update_transform) {
+            err = setup_external_display_transform(hwc_dev, ext_disp);
+            if (!err)
+                ext->update_transform = false;
+        }
+    }
+
+    for (i = 0; i < numDisplays; i++) {
+        if (hwc_dev->displays[i])
+            gather_layer_statistics(hwc_dev, i);
+    }
+
     reserve_overlays_for_displays(hwc_dev);
     reset_blitter(hwc_dev);
 
-    uint32_t i;
-    int err = 0;
     for (i = 0; i < numDisplays; i++) {
         if (displays[i]) {
             int disp_err = hwc_prepare_for_display(hwc_dev, i);

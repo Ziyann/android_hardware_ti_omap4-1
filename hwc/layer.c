@@ -107,24 +107,27 @@ uint32_t get_required_mem1d_size(const hwc_layer_1_t *layer)
 
 static bool can_scale_layer(omap_hwc_device_t *hwc_dev, int disp, const hwc_layer_1_t *layer)
 {
+    display_t *display = hwc_dev->displays[disp];
+    struct dsscomp_display_info *fb_info = &display->fb_info;
     IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
 
     int src_w = WIDTH(layer->sourceCrop);
     int src_h = HEIGHT(layer->sourceCrop);
-    int dst_w = WIDTH(layer->displayFrame);
-    int dst_h = HEIGHT(layer->displayFrame);
 
-    if (handle)
-        if (get_format_bpp(handle->iFormat) == 32 && src_w > 1280 && dst_w * 3 < src_w)
-            return false;
-
-    /* account for 90-degree rotation */
+    /* Account for 90-degree rotation */
     if (layer->transform & HWC_TRANSFORM_ROT_90)
         SWAP(src_w, src_h);
 
-    /* NOTE: layers should be able to be scaled externally since
-       framebuffer is able to be scaled on selected external resolution */
-    struct dsscomp_display_info *fb_info = &hwc_dev->displays[disp]->fb_info;
+    /* Account for display transform */
+    hwc_rect_t rect = layer->displayFrame;
+    if (display->transform.scaling)
+        transform_rect(display->transform.matrix, &rect);
+
+    int dst_w = WIDTH(rect);
+    int dst_h = HEIGHT(rect);
+
+    if (handle && get_format_bpp(handle->iFormat) == 32 && src_w > 1280 && dst_w * 3 < src_w)
+        return false;
 
     return can_dss_scale(hwc_dev, src_w, src_h, dst_w, dst_h, is_nv12_layer(layer),
                          fb_info, fb_info->timings.pixel_clock);

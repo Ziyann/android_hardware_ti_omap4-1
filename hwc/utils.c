@@ -16,6 +16,8 @@
 
 #include <stdint.h>
 
+#include <hardware/hwcomposer.h>
+
 #include "utils.h"
 
 #define ASPECT_RATIO_TOLERANCE 0.02f
@@ -53,10 +55,32 @@ void rotate_matrix(transform_matrix m, int quarter_turns)
     }
 }
 
-int round_float(float x)
+static int round_float(float x)
 {
     /* int truncates towards 0 */
     return (int) (x < 0 ? x - 0.5 : x + 0.5);
+}
+
+void transform_rect(transform_matrix m, hwc_rect_t *rect)
+{
+    int rect_width = WIDTH(*rect);
+    int rect_height = HEIGHT(*rect);
+    float x, y, w, h;
+
+    x = m[0][0] * rect->left + m[0][1] * rect->top + m[0][2];
+    y = m[1][0] * rect->left + m[1][1] * rect->top + m[1][2];
+    w = m[0][0] * rect_width + m[0][1] * rect_height;
+    h = m[1][0] * rect_width + m[1][1] * rect_height;
+
+    rect->left = round_float(w > 0 ? x : x + w);
+    rect->top = round_float(h > 0 ? y : y + h);
+
+    /* Compensate position rounding error by adjusting layer size */
+    w += w > 0 ? x - rect->left : rect->left - (x + w);
+    h += h > 0 ? y - rect->top : rect->top - (y + h);
+
+    rect->right = rect->left + round_float(w > 0 ? w : -w);
+    rect->bottom = rect->top + round_float(h > 0 ? h : -h);
 }
 
 void get_max_dimensions(uint32_t orig_xres, uint32_t orig_yres,

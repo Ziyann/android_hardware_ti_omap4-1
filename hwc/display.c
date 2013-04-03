@@ -744,6 +744,18 @@ int setup_external_display_transform(omap_hwc_device_t *hwc_dev, int disp)
 {
     display_t *display = hwc_dev->displays[disp];
 
+    if (display->mode == DISP_MODE_PRESENTATION) {
+        display_config_t *config = &display->configs[display->active_config_ix];
+        struct hwc_rect src_region = { .right = config->xres, .bottom = config->yres };
+        display->transform.region = src_region;
+    } else {
+        primary_display_t *primary = get_primary_display_info(hwc_dev);
+        if (!primary)
+            return -ENODEV;
+
+        display->transform.region = primary->mirroring_region;
+    }
+
     uint32_t xres = WIDTH(display->transform.region);
     uint32_t yres = HEIGHT(display->transform.region);
 
@@ -858,8 +870,6 @@ void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_d
         if (hwc_dev->displays[i]) {
             display_t *display = hwc_dev->displays[i];
             display->contents = displays[i];
-
-            gather_layer_statistics(hwc_dev, i);
 
             if (i != HWC_DISPLAY_PRIMARY) {
                 uint32_t mode = get_display_mode(hwc_dev, i);

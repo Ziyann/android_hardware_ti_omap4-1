@@ -19,6 +19,8 @@
 
 #include <stdint.h>
 
+#include <hardware/hwcomposer.h>
+
 #define MIN(a, b) ( { typeof(a) __a = (a), __b = (b); __a < __b ? __a : __b; } )
 #define MAX(a, b) ( { typeof(a) __a = (a), __b = (b); __a > __b ? __a : __b; } )
 #define SWAP(a, b) do { typeof(a) __a = (a); (a) = (b); (b) = __a; } while (0)
@@ -37,7 +39,7 @@ extern const transform_matrix unit_matrix;
 void translate_matrix(transform_matrix m, float dx, float dy);
 void scale_matrix(transform_matrix m, int x_from, int x_to, int y_from, int y_to);
 void rotate_matrix(transform_matrix m, int quarter_turns);
-int round_float(float x);
+void transform_rect(transform_matrix m, hwc_rect_t *rect);
 
 /*
  * Assuming xpy (xratio:yratio) original pixel ratio, calculate the adjusted width
