@@ -178,18 +178,31 @@ bool can_dss_scale(omap_hwc_device_t *hwc_dev, uint32_t src_w, uint32_t src_h,
 
 bool can_dss_render_all_layers(omap_hwc_device_t *hwc_dev, int disp)
 {
-    int ext_disp = (disp == HWC_DISPLAY_PRIMARY) ? get_external_display_id(hwc_dev) : disp;
-    bool mirroring = is_external_display_mirroring(hwc_dev, ext_disp);
+    display_t *display = hwc_dev->displays[disp];
+    layer_statistics_t *layer_stats = &display->layer_stats;
+    composition_t *comp = &display->composition;
     bool on_tv = is_hdmi_display(hwc_dev, disp);
-    if (!on_tv && mirroring) {
-        int clone = (disp == HWC_DISPLAY_PRIMARY) ? ext_disp : HWC_DISPLAY_PRIMARY;
-        on_tv = is_hdmi_display(hwc_dev, clone);
-    }
-    bool tform = mirroring && (hwc_dev->displays[ext_disp]->transform.rotation ||
-                              hwc_dev->displays[ext_disp]->transform.hflip);
+    bool tform = false;
 
-    layer_statistics_t *layer_stats = &hwc_dev->displays[disp]->layer_stats;
-    composition_t *comp = &hwc_dev->displays[disp]->composition;
+    int ext_disp = (disp == HWC_DISPLAY_PRIMARY) ? get_external_display_id(hwc_dev) : disp;
+    if (is_external_display_mirroring(hwc_dev, ext_disp)) {
+        display_t *ext_display = hwc_dev->displays[ext_disp];
+        uint32_t ext_composable_mask = ext_display->layer_stats.composable_mask;
+
+        /*
+         * Make sure that all layers that are composable on the primary display are also
+         * composable on the external.
+         */
+        if ((layer_stats->composable_mask & ext_composable_mask) != layer_stats->composable_mask)
+            return false;
+
+        if (!on_tv) {
+            int clone = (disp == HWC_DISPLAY_PRIMARY) ? ext_disp : HWC_DISPLAY_PRIMARY;
+            on_tv = is_hdmi_display(hwc_dev, clone);
+        }
+
+        tform = ext_display->transform.rotation || ext_display->transform.hflip;
+    }
 
     return  !hwc_dev->force_sgx &&
             /* must have at least one layer if using composition bypass to get sync object */
@@ -210,17 +223,25 @@ bool can_dss_render_all_layers(omap_hwc_device_t *hwc_dev, int disp)
 
 bool can_dss_render_layer(omap_hwc_device_t *hwc_dev, int disp, hwc_layer_1_t *layer)
 {
-    int ext_disp = (disp == HWC_DISPLAY_PRIMARY) ? get_external_display_id(hwc_dev) : disp;
-    bool mirroring = is_external_display_mirroring(hwc_dev, ext_disp);
+    display_t *display = hwc_dev->displays[disp];
+    composition_t *comp = &display->composition;
     bool on_tv = is_hdmi_display(hwc_dev, disp);
-    if (!on_tv && mirroring) {
-        int clone = (disp == HWC_DISPLAY_PRIMARY) ? ext_disp : HWC_DISPLAY_PRIMARY;
-        on_tv = is_hdmi_display(hwc_dev, clone);
-    }
-    bool tform = mirroring && (hwc_dev->displays[ext_disp]->transform.rotation ||
-                              hwc_dev->displays[ext_disp]->transform.hflip);
+    bool tform = false;
 
-    composition_t *comp = &hwc_dev->displays[disp]->composition;
+    int ext_disp = (disp == HWC_DISPLAY_PRIMARY) ? get_external_display_id(hwc_dev) : disp;
+    if (is_external_display_mirroring(hwc_dev, ext_disp)) {
+        display_t *ext_display = hwc_dev->displays[ext_disp];
+
+        if (!is_composable_layer(hwc_dev, ext_disp, layer))
+            return false;
+
+        if (!on_tv) {
+            int clone = (disp == HWC_DISPLAY_PRIMARY) ? ext_disp : HWC_DISPLAY_PRIMARY;
+            on_tv = is_hdmi_display(hwc_dev, clone);
+        }
+
+        tform = ext_display->transform.rotation || ext_display->transform.hflip;
+    }
 
     return is_composable_layer(hwc_dev, disp, layer) &&
            /* cannot rotate non-NV12 layers on external display */

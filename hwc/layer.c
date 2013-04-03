@@ -166,6 +166,8 @@ void gather_layer_statistics(omap_hwc_device_t *hwc_dev, int disp, hwc_display_c
     memset(layer_stats, 0, sizeof(*layer_stats));
 
     layer_stats->count = contents ? contents->numHwLayers : 0;
+    if (layer_stats->count > MAX_COMPOSITION_LAYERS)
+        layer_stats->count = MAX_COMPOSITION_LAYERS;
 
     /* Figure out how many layers we can support via DSS */
     for (i = 0; i < layer_stats->count; i++) {
@@ -179,6 +181,7 @@ void gather_layer_statistics(omap_hwc_device_t *hwc_dev, int disp, hwc_display_c
         }
 
         if (is_composable_layer(hwc_dev, disp, layer)) {
+            layer_stats->composable_mask |= 1 << i;
             layer_stats->composable++;
 
             /* NV12 layers can only be rendered on scaling overlays */
