@@ -126,6 +126,49 @@ err_out:
     return err;
 }
 
+static int free_tiler2d_buffers(external_hdmi_display_t *display)
+{
+    int i;
+    for (i = 0; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
+#ifdef USE_TI_LIBION
+        ion_free(display->ion_fd, display->ion_handles[i]);
+#else
+        ion_free(display->ion_fd, (ion_user_handle_t) display->ion_handles[i]);
+#endif
+        display->ion_handles[i] = NULL;
+    }
+
+    return 0;
+}
+
+static int allocate_tiler2d_buffers(omap_hwc_device_t *hwc_dev, external_hdmi_display_t *display)
+{
+    int ret, i;
+    size_t stride;
+
+    for (i = 0; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
+        if (display->ion_handles[i])
+            return 0;
+    }
+
+    IMG_framebuffer_device_public_t *fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
+    for (i = 0; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
+        ret = ion_alloc_tiler(display->ion_fd, fb_dev->base.width, fb_dev->base.height,
+                              TILER_PIXEL_FMT_32BIT, 0, &display->ion_handles[i], &stride);
+        if (ret)
+            goto handle_error;
+
+        ALOGI("ion handle[%d][%p]", i, display->ion_handles[i]);
+    }
+
+    return 0;
+
+handle_error:
+
+    free_tiler2d_buffers(display);
+    return -ENOMEM;
+}
+
 static int get_display_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents,
                             hwc_display_info_t *info)
 {
@@ -250,7 +293,7 @@ static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
     /* Create primary display translation matrix */
     int lcd_w = display->fb_info.timings.x_res;
     int lcd_h = display->fb_info.timings.y_res;
-    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
+    IMG_framebuffer_device_public_t *fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
     int orig_w = fb_dev->base.width;
     int orig_h = fb_dev->base.height;
     hwc_rect_t region = {.left = 0, .top = 0, .right = orig_w, .bottom = orig_h};
@@ -379,55 +422,23 @@ static int setup_external_display_transform(omap_hwc_device_t *hwc_dev, int disp
 
     set_external_display_transform_matrix(hwc_dev, disp);
 
-    return 0;
-}
-
-static int free_tiler2d_buffers(external_hdmi_display_t *display)
-{
-    int i;
-    for (i = 0 ; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
-#ifdef USE_TI_LIBION
-        ion_free(display->ion_fd, display->ion_handles[i]);
-#else
-        ion_free(display->ion_fd, (ion_user_handle_t) display->ion_handles[i]);
-#endif
-        display->ion_handles[i] = NULL;
+    if (is_hdmi_display(hwc_dev, disp) && display->transform.rotation) {
+        /*
+         * Allocate backup buffers for FB rotation. This is required only if the FB transform is
+         * different from that of the external display and the FB is not in TILER2D space.
+         */
+        external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)display;
+        if (ext_hdmi->ion_fd < 0 && (hwc_dev->dsscomp.limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
+            ext_hdmi->ion_fd = ion_open();
+            if (ext_hdmi->ion_fd >= 0) {
+                allocate_tiler2d_buffers(hwc_dev, ext_hdmi);
+            } else {
+                ALOGE("Failed to open ion driver (%d)", errno);
+            }
+        }
     }
 
     return 0;
-}
-
-static int allocate_tiler2d_buffers(omap_hwc_device_t *hwc_dev, external_hdmi_display_t *display)
-{
-    int ret, i;
-    size_t stride;
-
-    if (display->ion_fd < 0) {
-        ALOGE("No ion fd, hence can't allocate tiler2d buffers");
-        return -ENOMEM;
-    }
-
-    for (i = 0; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
-        if (display->ion_handles[i])
-            return 0;
-    }
-
-    IMG_framebuffer_device_public_t* fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY];
-    for (i = 0 ; i < EXTERNAL_DISPLAY_BACK_BUFFERS; i++) {
-        ret = ion_alloc_tiler(display->ion_fd, fb_dev->base.width, fb_dev->base.height,
-                              TILER_PIXEL_FMT_32BIT, 0, &display->ion_handles[i], &stride);
-        if (ret)
-            goto handle_error;
-
-        ALOGI("ion handle[%d][%p]", i, display->ion_handles[i]);
-    }
-
-    return 0;
-
-handle_error:
-
-    free_tiler2d_buffers(display);
-    return -ENOMEM;
 }
 
 static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents)
@@ -718,8 +729,6 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
         return err;
 
     display_t *display = hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-
-    display_config_t *config = &display->configs[0];
     display->fb_info = info;
     display->type = DISP_TYPE_HDMI;
     display->role = DISP_ROLE_EXTERNAL;
@@ -739,20 +748,10 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
     // TODO: Verify that HDMI supports xres x yres
     // TODO: Set HDMI resolution? What if we need to do docking of 1080p i.s.o. Presentation?
 
-    setup_hdmi_config(config, xres, yres, &display->fb_info);
+    setup_hdmi_config(&display->configs[0], xres, yres, &display->fb_info);
 
-    /* Allocate backup buffers for FB rotation. This is required only if the FB tranform is
-     * different from that of the external display and the FB is not in TILER2D space.
-     */
-    external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-    if (display->transform.rotation && (hwc_dev->dsscomp.limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
-        ext_hdmi->ion_fd = ion_open();
-        if (ext_hdmi->ion_fd >= 0) {
-            allocate_tiler2d_buffers(hwc_dev, ext_hdmi);
-        } else {
-            ALOGE("Failed to open ion driver (%d)", errno);
-        }
-    }
+    external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)display;
+    ext_hdmi->ion_fd = -1;
 
     /* check set props */
     char value[PROPERTY_VALUE_MAX];
@@ -776,13 +775,11 @@ void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev)
         return;
     }
 
-    external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-    if (display->transform.rotation && (hwc_dev->dsscomp.limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
+    external_hdmi_display_t *ext_hdmi = (external_hdmi_display_t*)display;
+    if (ext_hdmi->ion_fd >= 0 && (hwc_dev->dsscomp.limits.fbmem_type != DSSCOMP_FBMEM_TILER2D)) {
         /* free tiler 2D buffer on detach */
         free_tiler2d_buffers(ext_hdmi);
-
-        if (ext_hdmi->ion_fd >= 0)
-            ion_close(ext_hdmi->ion_fd);
+        ion_close(ext_hdmi->ion_fd);
     }
 
     remove_display(hwc_dev, HWC_DISPLAY_EXTERNAL);
@@ -965,8 +962,8 @@ int get_display_attributes(omap_hwc_device_t *hwc_dev, int disp, uint32_t cfg, c
     if (cfg >= display->num_configs)
         return -EINVAL;
 
-    const uint32_t* attribute = attributes;
-    int32_t* value = values;
+    const uint32_t *attribute = attributes;
+    int32_t *value = values;
     display_config_t *config = &display->configs[cfg];
 
     while (*attribute != HWC_DISPLAY_NO_ATTRIBUTE) {
