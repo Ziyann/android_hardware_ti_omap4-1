@@ -504,9 +504,10 @@ static inline int get_overlay_display_area(struct dss2_ovl_info const *ovl)
 
 static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
 {
+    display_t *ext_display = hwc_dev->displays[ext_disp];
+    composition_t *ext_comp = &ext_display->composition;
     composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &primary_comp->comp_data.dsscomp_data;
-    int ext_ovl_ix = dsscomp->num_ovls - primary_comp->used_ovls;
     struct dss2_ovl_info *o = &dsscomp->ovls[dsscomp->num_ovls];
 
     if (dsscomp->num_ovls >= MAX_DSS_OVERLAYS) {
@@ -516,16 +517,15 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
 
     memcpy(o, dsscomp->ovls + ix, sizeof(*o));
 
-    /* reserve overlays at end for other display */
-    o->cfg.ix = MAX_DSS_OVERLAYS - 1 - ext_ovl_ix;
-    o->cfg.mgr_ix = hwc_dev->displays[ext_disp]->mgr_ix;
+    o->cfg.ix = ext_comp->ovl_ix_base + ext_comp->used_ovls;
+    o->cfg.mgr_ix = ext_display->mgr_ix;
+
     /*
      * Here the assumption is that overlay0 is the one attached to FB.
      * Hence this clone_overlay call is for FB cloning (provided use_sgx is true).
-     */
-    /* For the external displays whose transform is the same as
-     * that of primary display, ion_handles would be NULL hence
-     * the below logic doesn't execute.
+     *
+     * For the external displays whose transform is the same as that of primary
+     * display, ion_handles would be NULL hence the below logic doesn't execute.
      */
     struct ion_handle *ion_handle = get_external_display_ion_fb_handle(hwc_dev);
     if (ix == 0 && ion_handle && primary_comp->use_sgx) {
@@ -536,11 +536,14 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
         o->ba = ix;
     }
 
-    /* use distinct z values (to simplify z-order checking) */
+    /* Use distinct z values (to simplify z-order checking) */
     o->cfg.zorder += primary_comp->used_ovls;
 
     adjust_overlay_to_display(hwc_dev, ext_disp, o);
+
     dsscomp->num_ovls++;
+    ext_comp->used_ovls++;
+
     return 0;
 }
 
@@ -684,14 +687,15 @@ static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
 static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
 {
     display_t *display = hwc_dev->displays[disp];
+    composition_t *comp = &display->composition;
     wfd_display_t *wfd = is_wfd_display(hwc_dev, disp) ? (wfd_display_t*)display : NULL;
     hdmi_display_t *hdmi = is_hdmi_display(hwc_dev, disp) ? (hdmi_display_t*)display : NULL;
     hwc_display_contents_1_t *list = display->contents;
 
     /* Mirror the layers using primary display composition */
     display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
-    composition_t *comp = &primary_display->composition;
-    struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    composition_t *primary_comp = &primary_display->composition;
+    struct dsscomp_setup_dispc_data *dsscomp = &primary_comp->comp_data.dsscomp_data;
     uint32_t i, ix;
 
     /* Prevent SurfaceFlinger composition for external display */
@@ -716,14 +720,14 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
         return;
 
     /* Mirror all layers */
-    for (ix = 0; ix < comp->used_ovls; ix++) {
+    for (ix = 0; ix < primary_comp->used_ovls; ix++) {
         if (clone_overlay(hwc_dev, ix, disp))
             break;
     }
 
     setup_dsscomp_manager(hwc_dev, disp);
 
-    hwc_dev->dsscomp.last_ext_ovls = ix;
+    hwc_dev->dsscomp.last_ext_ovls = comp->used_ovls;
 
     if (wfd && wfd->wb_mode == OMAP_WB_MEM2MEM_MODE)
         setup_wb_capture(hwc_dev, disp);
