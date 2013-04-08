@@ -202,6 +202,8 @@ int unblank_display(omap_hwc_device_t *hwc_dev, int disp);
 int setup_display_tranfsorm(omap_hwc_device_t *hwc_dev, int disp);
 int apply_display_transform(omap_hwc_device_t *hwc_dev, int disp);
 
+int validate_display_composition(omap_hwc_device_t *hwc_dev, int disp);
+
 void free_displays(omap_hwc_device_t *hwc_dev);
 
 #endif

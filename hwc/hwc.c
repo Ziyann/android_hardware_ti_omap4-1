@@ -714,7 +714,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         /* assign a z-layer for fb */
         if (fb_z < 0) {
             if (layer_stats->count)
-                ALOGE("**** should have assigned z-layer for fb");
+                ALOGW("Should have assigned z-layer for fb");
             fb_z = z++;
         }
 
@@ -726,23 +726,6 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         hwc_dev->dsscomp.last_int_ovls = comp->used_ovls;
     else
         hwc_dev->dsscomp.last_ext_ovls = comp->used_ovls;
-
-    if (z != dsscomp->num_ovls || dsscomp->num_ovls > MAX_DSS_OVERLAYS)
-        ALOGE("**** used %d z-layers for %d overlays\n", z, dsscomp->num_ovls);
-
-    /* verify all z-orders and overlay indices are distinct */
-    uint32_t ix;
-    for (i = z = ix = 0; i < dsscomp->num_ovls; i++) {
-        struct dss2_ovl_cfg *c = &dsscomp->ovls[i].cfg;
-
-        if (z & (1 << c->zorder))
-            ALOGE("**** used z-order #%d multiple times", c->zorder);
-        if (ix & (1 << c->ix))
-            ALOGE("**** used ovl index #%d multiple times", c->ix);
-
-        z |= 1 << c->zorder;
-        ix |= 1 << c->ix;
-    }
 
     setup_dsscomp_manager(hwc_dev, disp);
 
@@ -817,6 +800,10 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     for (i = 0; i < numDisplays; i++) {
         if (is_active_display(hwc_dev, i)) {
             disp_err = apply_display_transform(hwc_dev, i);
+            if (!err && disp_err)
+                err = disp_err;
+
+            disp_err = validate_display_composition(hwc_dev, i);
             if (!err && disp_err)
                 err = disp_err;
         }

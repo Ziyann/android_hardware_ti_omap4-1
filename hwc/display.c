@@ -1161,6 +1161,18 @@ int apply_display_transform(omap_hwc_device_t *hwc_dev, int disp)
     return 0;
 }
 
+int validate_display_composition(omap_hwc_device_t *hwc_dev, int disp)
+{
+    if (!is_valid_display(hwc_dev, disp))
+        return -ENODEV;
+
+    /* Mirrored composition is included in the primary one -- no need to check */
+    if (is_external_display_mirroring(hwc_dev, disp))
+        return 0;
+
+    return validate_dss_composition(hwc_dev, &hwc_dev->displays[disp]->composition.comp_data.dsscomp_data);
+}
+
 void free_displays(omap_hwc_device_t *hwc_dev)
 {
     /* Make sure that we don't leak ION memory that might be allocated by external display */
