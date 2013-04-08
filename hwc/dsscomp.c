@@ -474,3 +474,46 @@ void adjust_dss_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, struct 
     if (display->transform.hflip)
         oc->mirror = !oc->mirror;
 }
+
+int validate_dss_composition(omap_hwc_device_t *hwc_dev, struct dsscomp_setup_dispc_data *dsscomp)
+{
+    /* One extra overlay may be used by DSS WB */
+    if (dsscomp->num_ovls > MAX_DSS_OVERLAYS + 1) {
+        ALOGE("Used too many overlays (%d)", dsscomp->num_ovls);
+        return -ERANGE;
+    }
+
+    uint32_t max_z = 0;
+    uint32_t z = 0;
+    uint32_t ix = 0;
+    uint32_t i;
+    bool use_wb = false;
+
+    /* Verify all z-orders and overlay indices are distinct */
+    for (i = 0; i < dsscomp->num_ovls; i++) {
+        struct dss2_ovl_cfg *oc = &dsscomp->ovls[i].cfg;
+
+        if (max_z < oc->zorder)
+            max_z = oc->zorder;
+
+        if (oc->ix == OMAP_DSS_WB)
+            use_wb = true;
+
+        if ((z & (1 << oc->zorder)) && (oc->ix != OMAP_DSS_WB))
+            ALOGW("Used z-order %d multiple times", oc->zorder);
+
+        if (ix & (1 << oc->ix))
+            ALOGW("Used ovl index %d multiple times", oc->ix);
+
+        z |= 1 << oc->zorder;
+        ix |= 1 << oc->ix;
+    }
+
+    if (!use_wb && dsscomp->num_ovls > MAX_DSS_OVERLAYS)
+        ALOGW("Used too many overlays (%d)", dsscomp->num_ovls);
+
+    if (max_z != (uint32_t)(dsscomp->num_ovls - (use_wb ? 2 : 1)))
+        ALOGW("Used %d z-layers for %d overlays", max_z + 1, dsscomp->num_ovls);
+
+    return 0;
+}
