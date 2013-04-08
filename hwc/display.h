@@ -170,16 +170,14 @@ struct external_wfd_display {
 };
 typedef struct external_wfd_display external_wfd_display_t;
 
-int init_hdmi_display(omap_hwc_device_t *hwc_dev, int disp);
-
 int init_primary_display(omap_hwc_device_t *hwc_dev);
+int configure_primary_hdmi_display(omap_hwc_device_t *hwc_dev);
 void reset_primary_display(omap_hwc_device_t *hwc_dev);
 primary_display_t *get_primary_display_info(omap_hwc_device_t *hwc_dev);
 
 int add_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 void remove_external_hdmi_display(omap_hwc_device_t *hwc_dev);
 struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev);
-int setup_external_display_transform(omap_hwc_device_t *hwc_dev, int disp);
 
 void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
 void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays);
@@ -199,6 +197,8 @@ bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp);
 
 int blank_display(omap_hwc_device_t *hwc_dev, int disp);
 int unblank_display(omap_hwc_device_t *hwc_dev, int disp);
+
+int setup_display_tranfsorm(omap_hwc_device_t *hwc_dev, int disp);
 
 void free_displays(omap_hwc_device_t *hwc_dev);
 

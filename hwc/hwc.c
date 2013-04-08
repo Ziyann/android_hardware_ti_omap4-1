@@ -978,23 +978,21 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
     detect_virtual_displays(hwc_dev, numDisplays, displays);
     set_display_contents(hwc_dev, numDisplays, displays);
 
-    int ext_disp = get_external_display_id(hwc_dev);
-    if (ext_disp >= 0) {
-        display_t *ext_display = hwc_dev->displays[ext_disp];
-        if (ext_display->update_transform) {
-            err = setup_external_display_transform(hwc_dev, ext_disp);
-            if (!err)
-                ext_display->update_transform = false;
-        }
-    }
-
     for (i = 0; i < numDisplays; i++) {
-        if (hwc_dev->displays[i]) {
+        if (is_active_display(hwc_dev, i)) {
+            display_t *display = hwc_dev->displays[i];
             hwc_display_contents_1_t *contents;
+
+            if (display->update_transform) {
+                int disp_err = setup_display_tranfsorm(hwc_dev, i);
+                if (!err && disp_err)
+                    err = disp_err;
+            }
+
             if (is_external_display_mirroring(hwc_dev, i))
                 contents = hwc_dev->displays[HWC_DISPLAY_PRIMARY]->contents;
             else
-                contents = hwc_dev->displays[i]->contents;
+                contents = display->contents;
 
             gather_layer_statistics(hwc_dev, i, contents);
         }
@@ -1237,49 +1235,39 @@ err_out:
 static void handle_hotplug(omap_hwc_device_t *hwc_dev)
 {
     bool state = hwc_dev->ext_disp_state;
-
-    /* Ignore external HDMI logic if the primary display is HDMI */
-    if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
-        ALOGI("Primary display is HDMI - skip clone logic");
-
-        if (state) {
-            uint32_t xres = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.width;
-            uint32_t yres = hwc_dev->fb_dev[HWC_DISPLAY_PRIMARY]->base.height;
-
-            if (init_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
-                return;
-
-            primary_display_t *primary = get_primary_display_info(hwc_dev);
-            if (!primary || set_best_hdmi_mode(hwc_dev, HWC_DISPLAY_PRIMARY, xres, yres, primary->xpy)) {
-                ALOGE("Failed to set HDMI mode");
-            }
-        } else {
-            hdmi_display_t *hdmi = &((primary_hdmi_display_t*) hwc_dev->displays[HWC_DISPLAY_PRIMARY])->hdmi;
-            if (hdmi)
-                hdmi->video_mode_ix = 0;
-        }
-        return;
-    }
+    bool hotplug = false;
 
     pthread_mutex_lock(&hwc_dev->lock);
-    if (state) {
-        int err = -1;
-        err = add_external_hdmi_display(hwc_dev);
-        if (err)
-            goto done;
 
-        err = init_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL);
-        if (err)
-            goto done;
-    } else
-        remove_external_hdmi_display(hwc_dev);
+    if (is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY)) {
+        ALOGI("Primary HDMI display is %splugged", state ? "" : "un");
 
-    display_t *ext_display = hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
-    ALOGI("external display changed (state=%d, mirror={%s tform=%ddeg%s}, tv=%d", state,
-         is_external_display_mirroring(hwc_dev, HWC_DISPLAY_EXTERNAL) ? "mirror enabled" : "mirror disabled",
-         ext_display ? ext_display->transform.rotation * 90 : -1,
-         ext_display ? ext_display->transform.hflip ? "+hflip" : "" : "",
-         is_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL));
+        if (state) {
+            configure_primary_hdmi_display(hwc_dev);
+        } else {
+            hdmi_display_t *hdmi = (hdmi_display_t *)hwc_dev->displays[HWC_DISPLAY_PRIMARY];
+            hdmi->video_mode_ix = 0;
+        }
+    } else {
+        if (state) {
+            int err = add_external_hdmi_display(hwc_dev);
+            if (err) {
+                remove_external_hdmi_display(hwc_dev);
+                pthread_mutex_unlock(&hwc_dev->lock);
+                return;
+            }
+        } else
+            remove_external_hdmi_display(hwc_dev);
+
+        display_t *ext_display = hwc_dev->displays[HWC_DISPLAY_EXTERNAL];
+        ALOGI("external display changed (state=%d, mirror={%s tform=%ddeg%s}, tv=%d", state,
+             is_external_display_mirroring(hwc_dev, HWC_DISPLAY_EXTERNAL) ? "mirror enabled" : "mirror disabled",
+             ext_display ? ext_display->transform.rotation * 90 : -1,
+             ext_display ? ext_display->transform.hflip ? "+hflip" : "" : "",
+             is_hdmi_display(hwc_dev, HWC_DISPLAY_EXTERNAL));
+
+        hotplug = true;
+    }
 
     pthread_mutex_unlock(&hwc_dev->lock);
 
@@ -1287,22 +1275,13 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
      * still a race condition where a hotplug event might occur after the open
      * but before the procs are registered. */
     if (hwc_dev->procs) {
-        if (hwc_dev->procs->hotplug) {
+        if (hotplug && hwc_dev->procs->hotplug) {
             hwc_dev->procs->hotplug(hwc_dev->procs, HWC_DISPLAY_EXTERNAL, state);
         } else {
             if (hwc_dev->procs->invalidate)
                 hwc_dev->procs->invalidate(hwc_dev->procs);
         }
     }
-    return;
-
-done:
-    if(hwc_dev->displays[HWC_DISPLAY_EXTERNAL])
-        remove_external_hdmi_display(hwc_dev);
-
-    pthread_mutex_unlock(&hwc_dev->lock);
-    return;
-
 }
 
 static void handle_uevents(omap_hwc_device_t *hwc_dev, const char *buff, int len)
