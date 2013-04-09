@@ -360,8 +360,6 @@ static int clone_dss_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
     /* Use distinct z values (to simplify z-order checking) */
     ovl->cfg.zorder += primary_comp->used_ovls;
 
-    adjust_dss_overlay_to_display(hwc_dev, ext_disp, ovl);
-
     dsscomp->num_ovls++;
     ext_comp->used_ovls++;
 
@@ -729,12 +727,6 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     else
         hwc_dev->dsscomp.last_ext_ovls = comp->used_ovls;
 
-    /* Apply transform for display */
-    if (display->transform.scaling)
-        for (i = 0; i < dsscomp->num_ovls; i++) {
-            adjust_dss_overlay_to_display(hwc_dev, disp, &dsscomp->ovls[i]);
-        }
-
     if (z != dsscomp->num_ovls || dsscomp->num_ovls > MAX_DSS_OVERLAYS)
         ALOGE("**** used %d z-layers for %d overlays\n", z, dsscomp->num_ovls);
 
@@ -776,6 +768,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
 
     omap_hwc_device_t *hwc_dev = (omap_hwc_device_t *)dev;
     int err = 0;
+    int disp_err;
     uint32_t i;
 
     pthread_mutex_lock(&hwc_dev->lock);
@@ -791,7 +784,7 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
             hwc_display_contents_1_t *contents;
 
             if (display->update_transform) {
-                int disp_err = setup_display_tranfsorm(hwc_dev, i);
+                disp_err = setup_display_tranfsorm(hwc_dev, i);
                 if (!err && disp_err)
                     err = disp_err;
             }
@@ -810,7 +803,20 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
 
     for (i = 0; i < numDisplays; i++) {
         if (displays[i]) {
-            int disp_err = hwc_prepare_for_display(hwc_dev, i);
+            disp_err = hwc_prepare_for_display(hwc_dev, i);
+            if (!err && disp_err)
+                err = disp_err;
+        }
+    }
+
+    /*
+     * The display transform application has to be separated from prepare() loop so that in case
+     * of mirroring we clone original overlay configuration. Otherwise cloned overlays will have
+     * both primary and external display transform applied, which is not intended.
+     */
+    for (i = 0; i < numDisplays; i++) {
+        if (is_active_display(hwc_dev, i)) {
+            disp_err = apply_display_transform(hwc_dev, i);
             if (!err && disp_err)
                 err = disp_err;
         }
