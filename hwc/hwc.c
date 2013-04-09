@@ -82,180 +82,6 @@ static void showfps(void)
     }
 }
 
-static void setup_overlay(int index, uint32_t format, bool blended,
-                          int width, int height, struct dss2_ovl_info *ovl)
-{
-    struct dss2_ovl_cfg *oc = &ovl->cfg;
-    /* YUV2RGB conversion */
-    const struct omap_dss_cconv_coefs ctbl_bt601_5 = {
-        298,  409,    0,  298, -208, -100,  298,    0,  517, 0,
-    };
-
-    /* convert color format */
-    oc->color_mode = convert_hal_to_dss_format(format, blended);
-
-    if (oc->color_mode == OMAP_DSS_COLOR_NV12)
-        oc->cconv = ctbl_bt601_5;
-
-    oc->width = width;
-    oc->height = height;
-    oc->stride = get_stride_from_format(format, width);
-
-    oc->enabled = 1;
-    oc->global_alpha = 255;
-    oc->zorder = index;
-    oc->ix = 0;
-
-    /* defaults for SGX framebuffer renders */
-    oc->crop.w = oc->win.w = width;
-    oc->crop.h = oc->win.h = height;
-
-    /* for now interlacing and vc1 info is not supplied */
-    oc->ilace = OMAP_DSS_ILACE_NONE;
-    oc->vc1.enable = 0;
-}
-
-static void adjust_overlay_to_layer(omap_hwc_device_t *hwc_dev __unused, struct dss2_ovl_info *ovl,
-                                    hwc_layer_1_t const *layer, int index)
-{
-    IMG_native_handle_t *handle = (IMG_native_handle_t *)layer->handle;
-    struct dss2_ovl_cfg *oc = &ovl->cfg;
-
-#ifdef DUMP_LAYERS
-    dump_layer(layer);
-#endif
-
-    setup_overlay(index, handle->iFormat, is_blended_layer(layer), handle->iWidth, handle->iHeight, ovl);
-
-    /* convert transformation - assuming 0-set config */
-    if (layer->transform & HWC_TRANSFORM_FLIP_H)
-        oc->mirror = 1;
-    if (layer->transform & HWC_TRANSFORM_FLIP_V) {
-        oc->rotation = 2;
-        oc->mirror = !oc->mirror;
-    }
-    if (layer->transform & HWC_TRANSFORM_ROT_90) {
-        oc->rotation += oc->mirror ? -1 : 1;
-        oc->rotation &= 3;
-    }
-
-    oc->pre_mult_alpha = layer->blending == HWC_BLENDING_PREMULT;
-
-    /* display position */
-    oc->win.x = layer->displayFrame.left;
-    oc->win.y = layer->displayFrame.top;
-    oc->win.w = WIDTH(layer->displayFrame);
-    oc->win.h = HEIGHT(layer->displayFrame);
-
-    /* crop */
-    oc->crop.x = layer->sourceCrop.left;
-    oc->crop.y = layer->sourceCrop.top;
-    oc->crop.w = WIDTH(layer->sourceCrop);
-    oc->crop.h = HEIGHT(layer->sourceCrop);
-}
-
-static int crop_overlay_to_rect(struct hwc_rect vis_rect, struct dss2_ovl_info *ovl)
-{
-    struct dss2_ovl_cfg *oc = &ovl->cfg;
-
-    struct {
-        int xy[2];
-        int wh[2];
-    } crop, win;
-    struct {
-        int lt[2];
-        int rb[2];
-    } vis;
-    win.xy[0] = oc->win.x; win.xy[1] = oc->win.y;
-    win.wh[0] = oc->win.w; win.wh[1] = oc->win.h;
-    crop.xy[0] = oc->crop.x; crop.xy[1] = oc->crop.y;
-    crop.wh[0] = oc->crop.w; crop.wh[1] = oc->crop.h;
-    vis.lt[0] = vis_rect.left; vis.lt[1] = vis_rect.top;
-    vis.rb[0] = vis_rect.right; vis.rb[1] = vis_rect.bottom;
-
-    int c;
-    bool swap = oc->rotation & 1;
-
-    /* align crop window with display coordinates */
-    if (swap)
-        crop.xy[1] -= (crop.wh[1] = -crop.wh[1]);
-    if (oc->rotation & 2)
-        crop.xy[!swap] -= (crop.wh[!swap] = -crop.wh[!swap]);
-    if ((!oc->mirror) ^ !(oc->rotation & 2))
-        crop.xy[swap] -= (crop.wh[swap] = -crop.wh[swap]);
-
-    for (c = 0; c < 2; c++) {
-        /* see if complete buffer is outside the vis or it is
-          fully cropped or scaled to 0 */
-        if (win.wh[c] <= 0 || vis.rb[c] <= vis.lt[c] ||
-            win.xy[c] + win.wh[c] <= vis.lt[c] ||
-            win.xy[c] >= vis.rb[c] ||
-            !crop.wh[c ^ swap])
-            return -ENOENT;
-
-        /* crop left/top */
-        if (win.xy[c] < vis.lt[c]) {
-            /* correction term */
-            int a = (vis.lt[c] - win.xy[c]) * crop.wh[c ^ swap] / win.wh[c];
-            crop.xy[c ^ swap] += a;
-            crop.wh[c ^ swap] -= a;
-            win.wh[c] -= vis.lt[c] - win.xy[c];
-            win.xy[c] = vis.lt[c];
-        }
-        /* crop right/bottom */
-        if (win.xy[c] + win.wh[c] > vis.rb[c]) {
-            crop.wh[c ^ swap] = crop.wh[c ^ swap] * (vis.rb[c] - win.xy[c]) / win.wh[c];
-            win.wh[c] = vis.rb[c] - win.xy[c];
-        }
-
-        if (!crop.wh[c ^ swap] || !win.wh[c])
-            return -ENOENT;
-    }
-
-    /* realign crop window to buffer coordinates */
-    if (oc->rotation & 2)
-        crop.xy[!swap] -= (crop.wh[!swap] = -crop.wh[!swap]);
-    if ((!oc->mirror) ^ !(oc->rotation & 2))
-        crop.xy[swap] -= (crop.wh[swap] = -crop.wh[swap]);
-    if (swap)
-        crop.xy[1] -= (crop.wh[1] = -crop.wh[1]);
-
-    oc->win.x = win.xy[0]; oc->win.y = win.xy[1];
-    oc->win.w = win.wh[0]; oc->win.h = win.wh[1];
-    oc->crop.x = crop.xy[0]; oc->crop.y = crop.xy[1];
-    oc->crop.w = crop.wh[0]; oc->crop.h = crop.wh[1];
-
-    return 0;
-}
-
-static void adjust_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, struct dss2_ovl_info *ovl)
-{
-    struct dss2_ovl_cfg *oc = &ovl->cfg;
-    display_t *display = hwc_dev->displays[disp];
-    if (!display)
-        return;
-
-    if (crop_overlay_to_rect(display->transform.region, ovl) != 0) {
-        oc->enabled = 0;
-        return;
-    }
-
-    hwc_rect_t win = {oc->win.x, oc->win.y, oc->win.x + oc->win.w, oc->win.y + oc->win.h};
-
-    transform_rect(display->transform.matrix, &win);
-
-    oc->win.x = win.left;
-    oc->win.y = win.top;
-    oc->win.w = WIDTH(win);
-    oc->win.h = HEIGHT(win);
-
-    /* combining transformations: F^a*R^b*F^i*R^j = F^(a+b)*R^(j+b*(-1)^i), because F*R = R^(-1)*F */
-    oc->rotation += (oc->mirror ? -1 : 1) * display->transform.rotation;
-    oc->rotation &= 3;
-    if (display->transform.hflip)
-        oc->mirror = !oc->mirror;
-}
-
 static uint32_t add_scaling_score(uint32_t score,
                                   uint32_t xres, uint32_t yres, uint32_t refresh,
                                   uint32_t ext_xres, uint32_t ext_yres,
@@ -497,28 +323,23 @@ static void reserve_overlays_for_displays(omap_hwc_device_t *hwc_dev)
     }
 }
 
-static inline int get_overlay_display_area(struct dss2_ovl_info const *ovl)
-{
-    return ovl->cfg.win.w * ovl->cfg.win.h;
-}
-
-static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
+static int clone_dss_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
 {
     display_t *ext_display = hwc_dev->displays[ext_disp];
     composition_t *ext_comp = &ext_display->composition;
     composition_t *primary_comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &primary_comp->comp_data.dsscomp_data;
-    struct dss2_ovl_info *o = &dsscomp->ovls[dsscomp->num_ovls];
+    struct dss2_ovl_info *ovl = &dsscomp->ovls[dsscomp->num_ovls];
 
     if (dsscomp->num_ovls >= MAX_DSS_OVERLAYS) {
         ALOGE("**** cannot clone overlay #%d. using all %d overlays.", ix, dsscomp->num_ovls);
         return -EBUSY;
     }
 
-    memcpy(o, dsscomp->ovls + ix, sizeof(*o));
+    memcpy(ovl, dsscomp->ovls + ix, sizeof(*ovl));
 
-    o->cfg.ix = ext_comp->ovl_ix_base + ext_comp->used_ovls;
-    o->cfg.mgr_ix = ext_display->mgr_ix;
+    ovl->cfg.ix = ext_comp->ovl_ix_base + ext_comp->used_ovls;
+    ovl->cfg.mgr_ix = ext_display->mgr_ix;
 
     /*
      * Here the assumption is that overlay0 is the one attached to FB.
@@ -529,17 +350,17 @@ static int clone_overlay(omap_hwc_device_t *hwc_dev, int ix, int ext_disp)
      */
     struct ion_handle *ion_handle = get_external_display_ion_fb_handle(hwc_dev);
     if (ix == 0 && ion_handle && primary_comp->use_sgx) {
-        o->addressing = OMAP_DSS_BUFADDR_ION;
-        o->ba = (int)ion_handle;
+        ovl->addressing = OMAP_DSS_BUFADDR_ION;
+        ovl->ba = (int)ion_handle;
     } else {
-        o->addressing = OMAP_DSS_BUFADDR_OVL_IX;
-        o->ba = ix;
+        ovl->addressing = OMAP_DSS_BUFADDR_OVL_IX;
+        ovl->ba = ix;
     }
 
     /* Use distinct z values (to simplify z-order checking) */
-    o->cfg.zorder += primary_comp->used_ovls;
+    ovl->cfg.zorder += primary_comp->used_ovls;
 
-    adjust_overlay_to_display(hwc_dev, ext_disp, o);
+    adjust_dss_overlay_to_display(hwc_dev, ext_disp, ovl);
 
     dsscomp->num_ovls++;
     ext_comp->used_ovls++;
@@ -556,11 +377,11 @@ static void setup_framebuffer(omap_hwc_device_t *hwc_dev, int disp, int ovl_ix, 
     struct dss2_ovl_info *fb_ovl = &dsscomp->ovls[0];
     uint32_t i;
 
-    setup_overlay(zorder,
-                  hwc_dev->fb_dev[disp]->base.format,
-                  true,   /* FB is always premultiplied */
-                  config->xres, config->yres,
-                  fb_ovl);
+    setup_dss_overlay(config->xres, config->yres,
+                      hwc_dev->fb_dev[disp]->base.format,
+                      true,   /* FB is always premultiplied */
+                      zorder,
+                      fb_ovl);
 
     fb_ovl->cfg.mgr_ix = hwc_dev->displays[disp]->mgr_ix;
     fb_ovl->cfg.ix = ovl_ix;
@@ -637,30 +458,31 @@ static void setup_wb_capture(omap_hwc_device_t *hwc_dev, int disp)
         ALOGV("setup_wb_capture: layer is captured, handle = %p", wfd->wb_layer.handle);
         comp->buffers[comp->num_buffers] = wfd->wb_layer.handle;
 
-        struct dss2_ovl_info *oi = &dsscomp->ovls[dsscomp->num_ovls];
+        struct dss2_ovl_info *ovl = &dsscomp->ovls[dsscomp->num_ovls];
         int mgr_ix = (wfd->wb_mode == OMAP_WB_CAPTURE_MODE) ? primary_display->mgr_ix : display->mgr_ix;
 
-        adjust_overlay_to_layer(hwc_dev, oi, &wfd->wb_layer, 0); /* z-order doesn't matter for WB */
+        /* z-order doesn't matter for WB */
+        adjust_dss_overlay_to_layer(&wfd->wb_layer, 0, ovl);
 
-        oi->cfg.mgr_ix = mgr_ix;
-        oi->cfg.ix = OMAP_DSS_WB;
-        oi->addressing = OMAP_DSS_BUFADDR_LAYER_IX;
-        oi->ba = comp->num_buffers + (blit_data->rgz_items > 0 ? 1 : 0);
-        oi->cfg.wb_source = mgr_ix;
-        oi->cfg.wb_mode = wfd->wb_mode;
+        ovl->cfg.mgr_ix = mgr_ix;
+        ovl->cfg.ix = OMAP_DSS_WB;
+        ovl->addressing = OMAP_DSS_BUFADDR_LAYER_IX;
+        ovl->ba = comp->num_buffers + (blit_data->rgz_items > 0 ? 1 : 0);
+        ovl->cfg.wb_source = mgr_ix;
+        ovl->cfg.wb_mode = wfd->wb_mode;
 
-        if (oi->cfg.wb_mode == OMAP_WB_MEM2MEM_MODE) {
+        if (ovl->cfg.wb_mode == OMAP_WB_MEM2MEM_MODE) {
             /* Video overlays will take care of scaling - no need to scale on WB */
-            oi->cfg.crop = oi->cfg.win;
+            ovl->cfg.crop = ovl->cfg.win;
 
             primary_display_t *primary = get_primary_display_info(hwc_dev);
 
             if (primary) {
-                oi->cfg.rotation = primary->orientation;
+                ovl->cfg.rotation = primary->orientation;
 
                 if (primary->orientation & 1) {
-                    SWAP(oi->cfg.crop.x, oi->cfg.crop.y);
-                    SWAP(oi->cfg.crop.w, oi->cfg.crop.h);
+                    SWAP(ovl->cfg.crop.x, ovl->cfg.crop.y);
+                    SWAP(ovl->cfg.crop.w, ovl->cfg.crop.h);
                 }
             }
         }
@@ -721,7 +543,7 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
 
     /* Mirror all layers */
     for (ix = 0; ix < primary_comp->used_ovls; ix++) {
-        if (clone_overlay(hwc_dev, ix, disp))
+        if (clone_dss_overlay(hwc_dev, ix, disp))
             break;
     }
 
@@ -835,7 +657,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 
             comp->buffers[comp->num_buffers] = layer->handle;
 
-            adjust_overlay_to_layer(hwc_dev, &dsscomp->ovls[dsscomp->num_ovls], layer, z);
+            adjust_dss_overlay_to_layer(layer, z, &dsscomp->ovls[dsscomp->num_ovls]);
 
             dsscomp->ovls[dsscomp->num_ovls].cfg.ix = ovl_ix;
             dsscomp->ovls[dsscomp->num_ovls].cfg.mgr_ix = display->mgr_ix;
@@ -910,7 +732,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
     /* Apply transform for display */
     if (display->transform.scaling)
         for (i = 0; i < dsscomp->num_ovls; i++) {
-            adjust_overlay_to_display(hwc_dev, disp, &dsscomp->ovls[i]);
+            adjust_dss_overlay_to_display(hwc_dev, disp, &dsscomp->ovls[i]);
         }
 
     if (z != dsscomp->num_ovls || dsscomp->num_ovls > MAX_DSS_OVERLAYS)
