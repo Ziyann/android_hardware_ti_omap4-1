@@ -980,11 +980,11 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
 
     int ext_disp = get_external_display_id(hwc_dev);
     if (ext_disp >= 0) {
-        external_display_t *ext = get_external_display_info(hwc_dev, ext_disp);
-        if (ext && ext->update_transform) {
+        display_t *ext_display = hwc_dev->displays[ext_disp];
+        if (ext_display->update_transform) {
             err = setup_external_display_transform(hwc_dev, ext_disp);
             if (!err)
-                ext->update_transform = false;
+                ext_display->update_transform = false;
         }
     }
 

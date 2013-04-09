@@ -229,11 +229,8 @@ static void update_primary_display_orientation(omap_hwc_device_t *hwc_dev) {
         primary->orientation = display_info.orientation;
 
         int ext_disp = get_external_display_id(hwc_dev);
-        if (is_external_display_mirroring(hwc_dev, ext_disp)) {
-            external_display_t *ext = get_external_display_info(hwc_dev, ext_disp);
-            if (ext)
-                ext->update_transform = true;
-        }
+        if (is_external_display_mirroring(hwc_dev, ext_disp))
+            hwc_dev->displays[ext_disp]->update_transform = true;
     }
 }
 
@@ -410,10 +407,7 @@ static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_dis
     display->mode = DISP_MODE_INVALID;
     display->mgr_ix = 1;
     display->blanked = hwc_dev->displays[HWC_DISPLAY_PRIMARY]->blanked;
-
-    external_display_t *ext = get_external_display_info(hwc_dev, disp);
-
-    ext->update_transform = true;
+    display->update_transform = true;
 
     // HACK: WFD display does not have its own FB device, so instead we use FB of external HDMI display
     hwc_dev->fb_dev[disp] = hwc_dev->fb_dev[HWC_DISPLAY_EXTERNAL];
@@ -434,9 +428,7 @@ static int update_virtual_display(omap_hwc_device_t *hwc_dev, int disp, hwc_disp
     if ((uint32_t)config->xres != display_info.width || (uint32_t)config->yres != display_info.height) {
         setup_wfd_config(config, &display_info);
 
-        external_display_t *ext = get_external_display_info(hwc_dev, disp);
-        if (ext)
-            ext->update_transform = true;
+        display->update_transform = true;
     }
 
     return 0;
@@ -653,11 +645,13 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
     display->type = DISP_TYPE_HDMI;
     display->role = DISP_ROLE_EXTERNAL;
     display->mgr_ix = 1;
+
     /* SurfaceFlinger currently doesn't unblank external display on reboot.
      * Unblank HDMI display by default.
      * See SurfaceFlinger::readyToRun() function.
      */
     display->blanked = false;
+    display->update_transform = true;
 
     IMG_framebuffer_device_public_t *fb_dev = hwc_dev->fb_dev[HWC_DISPLAY_EXTERNAL];
     uint32_t xres = fb_dev->base.width;
@@ -680,8 +674,6 @@ int add_external_hdmi_display(omap_hwc_device_t *hwc_dev)
             ALOGE("Failed to open ion driver (%d)", errno);
         }
     }
-
-    ext_hdmi->ext.update_transform = true;
 
     /* check set props */
     char value[PROPERTY_VALUE_MAX];
@@ -722,22 +714,6 @@ struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev
     } else {
         return NULL;
     }
-}
-
-external_display_t *get_external_display_info(omap_hwc_device_t *hwc_dev, int disp)
-{
-    if (!is_valid_display(hwc_dev, disp))
-        return NULL;
-
-    display_t *display = hwc_dev->displays[disp];
-    external_display_t *ext = NULL;
-
-    if (is_hdmi_display(hwc_dev, disp))
-        ext = &((external_hdmi_display_t*)display)->ext;
-    else if (is_wfd_display(hwc_dev, disp))
-        ext = &((external_wfd_display_t*)display)->ext;
-
-    return ext;
 }
 
 int setup_external_display_transform(omap_hwc_device_t *hwc_dev, int disp)
@@ -876,10 +852,7 @@ void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_d
 
                 if (display->mode != mode) {
                     display->mode = mode;
-
-                    external_display_t *ext = get_external_display_info(hwc_dev, i);
-                    if (ext)
-                        ext->update_transform = true;
+                    display->update_transform = true;
                 }
             }
         }
