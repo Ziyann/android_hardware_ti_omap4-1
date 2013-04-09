@@ -38,6 +38,7 @@
 #include "hwc_dev.h"
 #include "color_fmt.h"
 #include "display.h"
+#include "dsscomp.h"
 #include "layer.h"
 #include "sw_vsync.h"
 #include "utils.h"
@@ -1130,6 +1131,34 @@ int setup_display_tranfsorm(omap_hwc_device_t *hwc_dev, int disp)
         display->update_transform = false;
 
     return err;
+}
+
+int apply_display_transform(omap_hwc_device_t *hwc_dev, int disp)
+{
+    if (!is_valid_display(hwc_dev, disp))
+        return -ENODEV;
+
+    display_t *display = hwc_dev->displays[disp];
+    display_transform_t *transform = &display->transform;
+
+    if (!transform->rotation && !transform->hflip && !transform->scaling)
+        return 0;
+
+    composition_t *comp;
+    if (is_external_display_mirroring(hwc_dev, disp))
+        comp = &hwc_dev->displays[HWC_DISPLAY_PRIMARY]->composition;
+    else
+        comp = &display->composition;
+
+    struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
+    uint32_t i;
+
+    for (i = 0; i < dsscomp->num_ovls; i++) {
+        if (dsscomp->ovls[i].cfg.mgr_ix == display->mgr_ix && dsscomp->ovls[i].cfg.ix != OMAP_DSS_WB)
+            adjust_dss_overlay_to_display(hwc_dev, disp, &dsscomp->ovls[i]);
+    }
+
+    return 0;
 }
 
 void free_displays(omap_hwc_device_t *hwc_dev)
