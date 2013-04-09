@@ -26,6 +26,7 @@
 #define NUM_NONSCALING_OVERLAYS 1
 
 typedef struct omap_hwc_device omap_hwc_device_t;
+typedef struct hwc_layer_1 hwc_layer_1_t;
 
 struct dsscomp_state {
     int fd;              /* file descriptor for /dev/dsscomp */
@@ -56,5 +57,9 @@ bool can_dss_render_all_layers(omap_hwc_device_t *hwc_dev, int disp);
 bool can_dss_render_layer(omap_hwc_device_t *hwc_dev, int disp, hwc_layer_1_t *layer);
 
 uint32_t decide_dss_wb_capture_mode(uint32_t src_xres, uint32_t src_yres, uint32_t dst_xres, uint32_t dst_yres);
+
+void setup_dss_overlay(int width, int height, uint32_t format, bool blended, int zorder, struct dss2_ovl_info *ovl);
+void adjust_dss_overlay_to_layer(hwc_layer_1_t const *layer, int zorder, struct dss2_ovl_info *ovl);
+void adjust_dss_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, struct dss2_ovl_info *ovl);
 
 #endif
