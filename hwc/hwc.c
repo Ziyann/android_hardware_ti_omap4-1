@@ -601,12 +601,10 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
         } else {
             /* Use SGX for composition plus first 3 layers that are DSS renderable */
             comp->use_sgx = true;
-            comp->swap_rb = is_bgr_format(hwc_dev->fb_dev[disp]->base.format);
+            /* Only LCD can display BGR layers */
+            comp->swap_rb = is_lcd_display(hwc_dev, disp) && is_bgr_format(hwc_dev->fb_dev[disp]->base.format);
         }
     }
-
-    if (hdmi)
-        comp->swap_rb = 0; /* hdmi manager doesn't support R&B swap */
 
     /* setup DSS overlays */
     int z = 0;

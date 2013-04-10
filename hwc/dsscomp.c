@@ -210,7 +210,7 @@ bool can_dss_render_all_layers(omap_hwc_device_t *hwc_dev, int disp)
     display_t *display = hwc_dev->displays[disp];
     layer_statistics_t *layer_stats = &display->layer_stats;
     composition_t *comp = &display->composition;
-    bool on_tv = is_hdmi_display(hwc_dev, disp);
+    bool support_bgr = is_lcd_display(hwc_dev, disp);
     bool tform = false;
 
     int ext_disp = (disp == HWC_DISPLAY_PRIMARY) ? get_external_display_id(hwc_dev) : disp;
@@ -225,27 +225,28 @@ bool can_dss_render_all_layers(omap_hwc_device_t *hwc_dev, int disp)
         if ((layer_stats->composable_mask & ext_composable_mask) != layer_stats->composable_mask)
             return false;
 
-        if (!on_tv) {
+        /* Make sure that all displays that are going to show the composition support BGR input */
+        if (support_bgr) {
             int clone = (disp == HWC_DISPLAY_PRIMARY) ? ext_disp : HWC_DISPLAY_PRIMARY;
-            on_tv = is_hdmi_display(hwc_dev, clone);
+            support_bgr = is_lcd_display(hwc_dev, clone);
         }
 
         tform = ext_display->transform.rotation || ext_display->transform.hflip;
     }
 
     return  !hwc_dev->force_sgx &&
-            /* must have at least one layer if using composition bypass to get sync object */
+            /* Must have at least one layer if using composition bypass to get sync object */
             layer_stats->composable &&
             layer_stats->composable <= comp->avail_ovls &&
             layer_stats->composable == layer_stats->count &&
             layer_stats->scaled <= comp->scaling_ovls &&
             layer_stats->nv12 <= comp->scaling_ovls &&
-            /* fits into TILER slot */
+            /* Fits into TILER slot */
             layer_stats->mem1d_total <= comp->tiler1d_slot_size &&
-            /* we cannot clone non-NV12 transformed layers */
+            /* We cannot clone non-NV12 transformed layers */
             (!tform || (layer_stats->nv12 == layer_stats->composable)) &&
-            /* HDMI cannot display BGR */
-            (layer_stats->bgr == 0 || (layer_stats->rgb == 0 && !on_tv) || !hwc_dev->flags_rgb_order) &&
+            /* Only LCD can display BGR */
+            (layer_stats->bgr == 0 || (layer_stats->rgb == 0 && support_bgr) || !hwc_dev->flags_rgb_order) &&
             /* If nv12_only flag is set DSS should only render NV12 */
             (!hwc_dev->flags_nv12_only || (layer_stats->bgr == 0 && layer_stats->rgb == 0));
 }
@@ -254,7 +255,6 @@ bool can_dss_render_layer(omap_hwc_device_t *hwc_dev, int disp, hwc_layer_1_t *l
 {
     display_t *display = hwc_dev->displays[disp];
     composition_t *comp = &display->composition;
-    bool on_tv = is_hdmi_display(hwc_dev, disp);
     bool tform = false;
 
     int ext_disp = (disp == HWC_DISPLAY_PRIMARY) ? get_external_display_id(hwc_dev) : disp;
@@ -264,24 +264,16 @@ bool can_dss_render_layer(omap_hwc_device_t *hwc_dev, int disp, hwc_layer_1_t *l
         if (!is_composable_layer(hwc_dev, ext_disp, layer))
             return false;
 
-        if (!on_tv) {
-            int clone = (disp == HWC_DISPLAY_PRIMARY) ? ext_disp : HWC_DISPLAY_PRIMARY;
-            on_tv = is_hdmi_display(hwc_dev, clone);
-        }
-
         tform = ext_display->transform.rotation || ext_display->transform.hflip;
     }
 
     return is_composable_layer(hwc_dev, disp, layer) &&
-           /* cannot rotate non-NV12 layers on external display */
+           /* Cannot rotate non-NV12 layers on external display */
            (!tform || is_nv12_layer(layer)) &&
-           /* skip non-NV12 layers if also using SGX (if nv12_only flag is set) */
+           /* Skip non-NV12 layers if also using SGX (if nv12_only flag is set) */
            (!hwc_dev->flags_nv12_only || (!comp->use_sgx || is_nv12_layer(layer))) &&
-           /* make sure RGB ordering is consistent (if rgb_order flag is set) */
-           (!(comp->swap_rb ? is_rgb_layer(layer) : is_bgr_layer(layer)) ||
-            !hwc_dev->flags_rgb_order) &&
-           /* TV can only render RGB */
-           !(on_tv && is_bgr_layer(layer));
+           /* Make sure RGB ordering is consistent (if rgb_order flag is set) */
+           (!(comp->swap_rb ? is_rgb_layer(layer) : is_bgr_layer(layer)) || !hwc_dev->flags_rgb_order);
 }
 
 uint32_t decide_dss_wb_capture_mode(uint32_t src_xres, uint32_t src_yres, uint32_t dst_xres, uint32_t dst_yres)
