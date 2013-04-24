@@ -469,6 +469,9 @@ void adjust_dss_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, struct 
 
 int validate_dss_composition(omap_hwc_device_t *hwc_dev, struct dsscomp_setup_dispc_data *dsscomp)
 {
+    if (dsscomp->num_ovls == 0)
+        return 0;
+
     /* One extra overlay may be used by DSS WB */
     if (dsscomp->num_ovls > MAX_DSS_OVERLAYS + 1) {
         ALOGE("Used too many overlays (%d)", dsscomp->num_ovls);
