@@ -20,7 +20,7 @@ LOCAL_SRC_FILES := \
     sw_vsync.c \
     utils.c
 
-LOCAL_CFLAGS := -DLOG_TAG=\"ti_hwc\" -Wall -Werror
+LOCAL_CFLAGS := -Wall -Werror
 
 ifeq ($(BOARD_USE_TI_LIBION),true)
 LOCAL_SHARED_LIBRARIES += libion_ti
@@ -43,7 +43,8 @@ LOCAL_STATIC_LIBRARIES := libpng
 
 LOCAL_MODULE_TAGS := optional
 
-LOCAL_MODULE := hwcomposer.omap4
+LOCAL_MODULE := hwcomposer.$(TARGET_BOARD_PLATFORM)
+LOCAL_CFLAGS += -DLOG_TAG=\"ti_hwc\"
 LOCAL_C_INCLUDES += external/libpng external/zlib
 
 LOCAL_C_INCLUDES += \
