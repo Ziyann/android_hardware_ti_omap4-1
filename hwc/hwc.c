@@ -1030,11 +1030,11 @@ err_out:
 static void handle_hotplug(omap_hwc_device_t *hwc_dev)
 {
     /* WA: till Hotplug is integrated */
-    char board[PROPERTY_VALUE_MAX];
-    property_get("ro.product.board", board, "");
-    if ((strncmp("jacinto6evm", board, PROPERTY_VALUE_MAX)) &&
-            is_hdmi_display(hwc_dev, HWC_DISPLAY_PRIMARY))
+    char value[PROPERTY_VALUE_MAX];
+    property_get("hwc.hdmi.force.init", value, "0");
+    if (atoi(value)) {
         hwc_dev->ext_disp_state = 1;
+    }
 
     bool state = hwc_dev->ext_disp_state;
     bool hotplug = false;
