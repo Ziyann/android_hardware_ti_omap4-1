@@ -818,11 +818,17 @@ void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hw
     for (i = HWC_DISPLAY_EXTERNAL + 1; i < num_displays; i++) {
         if (displays[i]) {
             if (!hwc_dev->displays[i]) {
+                int ext_disp = get_external_display_id(hwc_dev);
                 err = add_virtual_wfd_display(hwc_dev, i, displays[i]);
                 if (err)
                     ALOGE("Failed to connect virtual display %d (%d)", i, err);
                 else
                     ALOGI("Virtual display %d has been connected", i);
+                /* HDMI and WFD display can't work together. Disable WFD display. */
+                if (is_hdmi_display(hwc_dev, ext_disp)) {
+                    ALOGE("Disable virtual display %d because HDMI display is already connected", i);
+                    disable_display(hwc_dev, i);
+                }
             } else {
                 err = update_virtual_display(hwc_dev, i, displays[i]);
                 if (err)
@@ -1112,6 +1118,21 @@ int unblank_display(omap_hwc_device_t *hwc_dev, int disp)
         ALOGW("Failed to unblank display %d (%d)", disp, err);
 
     return err;
+}
+
+int disable_display(omap_hwc_device_t *hwc_dev, int disp)
+{
+    if (!is_valid_display(hwc_dev, disp))
+        return -ENODEV;
+    /* We can remove display from composition by changing its type to unknown.
+     *
+     * HACK: Changing active display type is safe here because the only operation we are
+     * going to do on this display is remove. At the moment removing does not depend on
+     * display type.
+     */
+    hwc_dev->displays[disp]->type = DISP_TYPE_UNKNOWN;
+
+    return 0;
 }
 
 int setup_display_tranfsorm(omap_hwc_device_t *hwc_dev, int disp)

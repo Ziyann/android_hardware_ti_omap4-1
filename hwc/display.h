@@ -198,6 +198,7 @@ bool is_external_display_mirroring(omap_hwc_device_t *hwc_dev, int disp);
 
 int blank_display(omap_hwc_device_t *hwc_dev, int disp);
 int unblank_display(omap_hwc_device_t *hwc_dev, int disp);
+int disable_display(omap_hwc_device_t *hwc_dev, int disp);
 
 int setup_display_tranfsorm(omap_hwc_device_t *hwc_dev, int disp);
 int apply_display_transform(omap_hwc_device_t *hwc_dev, int disp);
