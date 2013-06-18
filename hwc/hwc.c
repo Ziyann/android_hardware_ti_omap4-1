@@ -1052,11 +1052,17 @@ static void handle_hotplug(omap_hwc_device_t *hwc_dev)
         }
     } else {
         if (state) {
+            int ext_disp = get_external_display_id(hwc_dev);
             int err = add_external_hdmi_display(hwc_dev);
             if (err) {
                 remove_external_hdmi_display(hwc_dev);
                 pthread_mutex_unlock(&hwc_dev->lock);
                 return;
+            }
+            /* HDMI and WFD display can't work together. Disable WFD display. */
+            if (is_wfd_display(hwc_dev, ext_disp)) {
+                ALOGI("HDMI display is connected. Disable virtual display %d", ext_disp);
+                disable_display(hwc_dev, ext_disp);
             }
         } else
             remove_external_hdmi_display(hwc_dev);
