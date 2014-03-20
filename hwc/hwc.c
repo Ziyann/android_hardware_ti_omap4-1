@@ -689,7 +689,7 @@ static int hwc_prepare_for_display(omap_hwc_device_t *hwc_dev, int disp)
 
     /* If scaling GFX (e.g. only 1 scaled surface) use a VID overlay */
     if (scaled_gfx)
-        dsscomp->ovls[0].cfg.ix = ovl_ix;
+        dsscomp->ovls[0].cfg.ix = (ovl_ix < comp->avail_ovls) ? ovl_ix : (MAX_DSS_OVERLAYS - 1);
 
     if (get_blitter_policy(hwc_dev, disp) == BLT_POLICY_DEFAULT) {
         /*
