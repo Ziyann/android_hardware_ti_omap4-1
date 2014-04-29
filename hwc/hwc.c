@@ -885,7 +885,8 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
 
         err = hwc_dev->fb_dev[disp]->Post2((framebuffer_device_t *)hwc_dev->fb_dev[disp],
                              comp->buffers, comp->num_buffers,
-                             dsscomp, sizeof(comp->comp_data) + get_blitter_data_size(hwc_dev));
+                             dsscomp, sizeof(comp->comp_data.dsscomp_data)); /* Since there is no Blitter support,
+                                                                                 pass only the dsscomp structure size */
 
         if (disp == HWC_DISPLAY_PRIMARY)
             showfps();

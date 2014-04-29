@@ -78,6 +78,10 @@ int init_blitter(omap_hwc_device_t *hwc_dev)
 uint32_t get_blitter_policy(omap_hwc_device_t *hwc_dev, int disp)
 {
     blitter_config_t *blitter = &hwc_dev->blitter;
+
+    /* HACK: to disable Blitter on Kitkat with DDK1.12 */
+    return BLT_POLICY_DISABLED;
+
     /*
      * Since we have only one set of framebuffers allocated in kernel, blitter is used only on
      * a single (primary) display.
