@@ -1018,8 +1018,8 @@ static int open_fb_hal(IMG_framebuffer_device_public_t *fb_dev[MAX_DISPLAYS])
     for (i = 0; i < MAX_DISPLAYS; i++)
         fb_dev[i] = NULL;
 
-    fb_dev[0] = psGrallocModule->psFbDevice[0];
-    fb_dev[1] = psGrallocModule->psFbDevice[1];
+    fb_dev[0] = psGrallocModule->psFrameBufferDevice;
+    fb_dev[1] = psGrallocModule->psFrameBufferDevice;
 
     return 0;
 
