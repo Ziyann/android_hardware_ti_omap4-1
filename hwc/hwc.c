@@ -1407,7 +1407,7 @@ static int hwc_device_open(const hw_module_t* module, const char* name, hw_devic
     char value[PROPERTY_VALUE_MAX];
     property_get("debug.hwc.rgb_order", value, "1");
     hwc_dev->flags_rgb_order = atoi(value);
-    property_get("debug.hwc.nv12_only", value, "0");
+    property_get("persist.hwc.nv12_only", value, "0");
     hwc_dev->flags_nv12_only = atoi(value);
     property_get("debug.hwc.idle", value, "250");
     hwc_dev->idle = atoi(value);
