@@ -890,6 +890,12 @@ static uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
     if (err)
         return DISP_MODE_INVALID;
 
+    /* if the secondary stack is not yet initialized by the SurfaceFlinger
+    * let's assume it is in the default mode, same as the primary stack
+    */
+    if ((int)stack < 0)
+        stack = primaryStack;
+
     if (stack != primaryStack)
         return DISP_MODE_PRESENTATION;
 #endif
