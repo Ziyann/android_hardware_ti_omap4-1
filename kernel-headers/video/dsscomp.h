@@ -411,4 +411,5 @@ struct dsscomp_platform_info {
 #define DSSCIOC_SETUP_DISPLAY _IOW('O', 134, struct dsscomp_setup_display_data)
 #define DSSCIOC_QUERY_PLATFORM _IOR('O', 135, struct dsscomp_platform_info)
 /* WARNING: DO NOT EDIT, AUTO-GENERATED CODE - SEE TOP FOR INSTRUCTIONS */
+#define DSSCIOC_WB_DONE _IOW('O', 136, __u32)
 #endif
