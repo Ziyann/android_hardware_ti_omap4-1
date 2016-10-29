@@ -169,6 +169,7 @@ handle_error:
     return -ENOMEM;
 }
 
+#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
 static int get_display_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents,
                             hwc_display_info_t *info)
 {
@@ -186,6 +187,7 @@ static int get_display_info(omap_hwc_device_t *hwc_dev, int disp, hwc_display_co
 
     return err;
 }
+#endif
 
 static void setup_config(display_config_t *config, int xres, int yres, struct dsscomp_display_info *info,
                          int default_fps, int default_dpi)
@@ -213,6 +215,7 @@ static void setup_hdmi_config(display_config_t *config, int xres, int yres, stru
     setup_config(config, xres, yres, info, HDMI_DISPLAY_FPS, HDMI_DISPLAY_DEFAULT_DPI);
 }
 
+#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
 static void setup_wfd_config(display_config_t *config, hwc_display_info_t *info)
 {
     config->xres = info->width;
@@ -221,6 +224,7 @@ static void setup_wfd_config(display_config_t *config, hwc_display_info_t *info)
     config->xdpi = WFD_DISPLAY_DEFAULT_DPI;
     config->ydpi = WFD_DISPLAY_DEFAULT_DPI;
 }
+#endif
 
 static int init_primary_lcd_display(omap_hwc_device_t *hwc_dev, uint32_t xres, uint32_t yres, struct dsscomp_display_info *info)
 {
@@ -265,6 +269,7 @@ static int init_primary_hdmi_display(omap_hwc_device_t *hwc_dev, uint32_t xres, 
     return 0;
 }
 
+#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
 static void update_primary_display_orientation(omap_hwc_device_t *hwc_dev) {
     display_t *display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
     hwc_display_info_t display_info;
@@ -285,6 +290,7 @@ static void update_primary_display_orientation(omap_hwc_device_t *hwc_dev) {
             hwc_dev->displays[ext_disp]->update_transform = true;
     }
 }
+#endif
 
 static void set_primary_display_transform_matrix(omap_hwc_device_t *hwc_dev)
 {
@@ -441,6 +447,7 @@ static int setup_external_display_transform(omap_hwc_device_t *hwc_dev, int disp
     return 0;
 }
 
+#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
 static int add_virtual_wfd_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display_contents_1_t *contents)
 {
     int err;
@@ -493,6 +500,7 @@ static int update_virtual_display(omap_hwc_device_t *hwc_dev, int disp, hwc_disp
 
     return 0;
 }
+#endif
 
 static int capture_black_frame(omap_hwc_device_t *hwc_dev, int disp)
 {
@@ -798,6 +806,7 @@ struct ion_handle *get_external_display_ion_fb_handle(omap_hwc_device_t *hwc_dev
     }
 }
 
+#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
 void detect_virtual_displays(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_display_contents_1_t **displays) {
     size_t i;
     int err;
@@ -840,6 +849,7 @@ static int get_layer_stack(omap_hwc_device_t *hwc_dev, int disp, uint32_t *stack
 
     return 0;
 }
+#endif
 
 static uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
 {
@@ -857,6 +867,7 @@ static uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
     if (!display->contents)
         return DISP_MODE_INVALID;
 
+#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
     if (!(display->contents->flags & HWC_EXTENDED_API) || !hwc_dev->procs || !hwc_dev->procs->extension_cb)
         return DISP_MODE_LEGACY;
 
@@ -873,6 +884,7 @@ static uint32_t get_display_mode(omap_hwc_device_t *hwc_dev, int disp)
 
     if (stack != primaryStack)
         return DISP_MODE_PRESENTATION;
+#endif
 
     return DISP_MODE_LEGACY;
 }
@@ -905,7 +917,9 @@ void set_display_contents(omap_hwc_device_t *hwc_dev, size_t num_displays, hwc_d
             hwc_dev->displays[i]->contents = NULL;
     }
 
+#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
     update_primary_display_orientation(hwc_dev);
+#endif
 }
 
 int get_external_display_id(omap_hwc_device_t *hwc_dev)

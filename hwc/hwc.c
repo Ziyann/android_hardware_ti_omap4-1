@@ -954,7 +954,9 @@ static int hwc_prepare(struct hwc_composer_device_1 *dev, size_t numDisplays,
 
     pthread_mutex_lock(&hwc_dev->lock);
 
+#ifdef OMAP_ENHANCEMENT_HWC_EXTENDED_API
     detect_virtual_displays(hwc_dev, numDisplays, displays);
+#endif
     set_display_contents(hwc_dev, numDisplays, displays);
 
     for (i = 0; i < numDisplays; i++) {
