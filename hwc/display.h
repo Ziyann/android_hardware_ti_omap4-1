@@ -31,7 +31,6 @@
 #define MAX_COMPOSITION_LAYERS MAX_COMPOSITION_BUFFERS
 
 struct ion_handle;
-typedef struct omap_hwc_device omap_hwc_device_t;
 
 struct display_transform {
     uint8_t rotation;       /* 90-degree clockwise rotations */
@@ -125,44 +124,44 @@ struct primary_display {
 typedef struct primary_display primary_display_t;
 
 struct primary_lcd_display {
-    display_t lcd;
     primary_display_t primary;
+    display_t lcd;
 };
 typedef struct primary_lcd_display primary_lcd_display_t;
 
 struct hdmi_display {
-    display_t base;
-
     uint16_t width;         /* external screen dimensions */
     uint16_t height;
     uint32_t video_mode_ix;    /* TWO's complement of video mode index */
     struct dsscomp_videomode mode_db[MAX_DISPLAY_CONFIGS];
+
+    display_t base;
 };
 typedef struct hdmi_display hdmi_display_t;
 
 struct primary_hdmi_display {
-    hdmi_display_t hdmi;
     primary_display_t primary;
+    hdmi_display_t hdmi;
 };
 typedef struct primary_hdmi_display primary_hdmi_display_t;
 
 struct external_hdmi_display {
-    hdmi_display_t hdmi;
-
     /* attributes */
     bool avoid_mode_change;        /* use HDMI mode used for mirroring if possible */
     int ion_fd;
     struct ion_handle *ion_handles[EXTERNAL_DISPLAY_BACK_BUFFERS];
+
+    hdmi_display_t hdmi;
 };
 typedef struct external_hdmi_display external_hdmi_display_t;
 
 struct wfd_display {
-    display_t base;
-
     bool use_wb;
     hwc_layer_1_t wb_layer;
     int wb_sync_id;
     uint32_t wb_mode;
+
+    display_t base;
 };
 typedef struct wfd_display wfd_display_t;
 

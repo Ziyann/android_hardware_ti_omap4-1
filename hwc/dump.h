@@ -27,9 +27,6 @@ struct dump_buf {
 typedef struct dump_buf dump_buf_t;
 
 struct dsscomp_setup_dispc_data;
-typedef struct hwc_layer_1 hwc_layer_1_t;
-typedef struct hwc_display_contents_1 hwc_display_contents_1_t;
-typedef struct omap_hwc_device omap_hwc_device_t;
 
 /* dumpsys SurfaceFlinger */
 void dump_hwc_info(omap_hwc_device_t *hwc_dev, dump_buf_t *log);

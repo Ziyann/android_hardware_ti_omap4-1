@@ -27,6 +27,8 @@
 #include <video/dsscomp.h>
 #include <video/omap_hwc.h>
 
+typedef struct omap_hwc_device omap_hwc_device_t;
+
 #include "hal_public.h"
 #include "blitter.h"
 #include "display.h"

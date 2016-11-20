@@ -25,9 +25,6 @@
 #define MAX_DSS_OVERLAYS 4
 #define NUM_NONSCALING_OVERLAYS 1
 
-typedef struct omap_hwc_device omap_hwc_device_t;
-typedef struct hwc_layer_1 hwc_layer_1_t;
-
 struct dsscomp_state {
     int fd;              /* file descriptor for /dev/dsscomp */
 
@@ -62,6 +59,6 @@ void setup_dss_overlay(int width, int height, uint32_t format, bool blended, int
 void adjust_dss_overlay_to_layer(hwc_layer_1_t const *layer, int zorder, struct dss2_ovl_info *ovl);
 void adjust_dss_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, struct dss2_ovl_info *ovl);
 
-int validate_dss_composition(omap_hwc_device_t *hwc_dev, struct dsscomp_setup_dispc_data *dsscomp);
+int validate_dss_composition(struct dsscomp_setup_dispc_data *dsscomp);
 
 #endif

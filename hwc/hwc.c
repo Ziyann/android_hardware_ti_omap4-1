@@ -515,7 +515,6 @@ static void mirror_primary_composition(omap_hwc_device_t *hwc_dev, int disp)
     /* Mirror the layers using primary display composition */
     display_t *primary_display = hwc_dev->displays[HWC_DISPLAY_PRIMARY];
     composition_t *primary_comp = &primary_display->composition;
-    struct dsscomp_setup_dispc_data *dsscomp = &primary_comp->comp_data.dsscomp_data;
     uint32_t i, ix;
 
     /* Prevent SurfaceFlinger composition for external display */
@@ -825,7 +824,6 @@ static int hwc_set_for_display(omap_hwc_device_t *hwc_dev, int disp, hwc_display
     layer_statistics_t *layer_stats = &display->layer_stats;
     composition_t *comp = &display->composition;
     struct dsscomp_setup_dispc_data *dsscomp = &comp->comp_data.dsscomp_data;
-    blitter_config_t *blitter = &hwc_dev->blitter;
 
     if (disp != HWC_DISPLAY_PRIMARY) {
         if (comp->wanted_ovls && (comp->avail_ovls < comp->wanted_ovls) &&

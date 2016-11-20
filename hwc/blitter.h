@@ -24,9 +24,6 @@
 
 #include "rgz_2d.h"
 
-typedef struct hwc_display_contents_1 hwc_display_contents_1_t;
-typedef struct omap_hwc_device omap_hwc_device_t;
-
 enum blt_policy {
     BLT_POLICY_DISABLED = 0,
     BLT_POLICY_DEFAULT = 1,    /* Default blit policy */

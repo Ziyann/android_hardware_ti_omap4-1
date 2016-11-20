@@ -467,7 +467,7 @@ void adjust_dss_overlay_to_display(omap_hwc_device_t *hwc_dev, int disp, struct 
         oc->mirror = !oc->mirror;
 }
 
-int validate_dss_composition(omap_hwc_device_t *hwc_dev, struct dsscomp_setup_dispc_data *dsscomp)
+int validate_dss_composition(struct dsscomp_setup_dispc_data *dsscomp)
 {
     if (dsscomp->num_ovls == 0)
         return 0;
